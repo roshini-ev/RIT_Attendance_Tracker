@@ -1,0 +1,1 @@
+{"name":"RIT Staff Attendance Tracker","description":"Dummy staff location-based attendance tracking web application for Rajalakshmi Institute of Technology (RIT).","requestFramePermissions":["geolocation"],"majorCapabilities":["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]}

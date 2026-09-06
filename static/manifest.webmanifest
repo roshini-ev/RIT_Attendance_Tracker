@@ -1,0 +1,19 @@
+{
+  "name": "RIT Staff Attendance",
+  "short_name": "RIT Punch",
+  "description": "Rajalakshmi Institute of Technology — staff location punch portal",
+  "start_url": "/login",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0d47a1",
+  "theme_color": "#1565c0",
+  "icons": [
+    {
+      "src": "/static/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

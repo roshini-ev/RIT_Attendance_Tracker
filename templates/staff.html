@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#1565c0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <title>RIT Punch</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="staff-app">
+  <header class="header">
+    <div class="hdr-left">
+      <div class="hdr-logo">RIT</div>
+      <div class="hdr-brand">
+        <div class="hdr-rit">Staff Attendance</div>
+        <div class="hdr-tagline">Rajalakshmi Institute of Technology</div>
+      </div>
+    </div>
+    <a class="hdr-logout" href="/logout">Logout</a>
+  </header>
+
+  <main class="staff-main">
+    <div class="punch-card">
+      <p class="punch-kicker">Logged in as</p>
+      <div class="staff-id-display" id="staffIdDisplay">{{ staff_id }}</div>
+      <p class="punch-hint">Tap once to record your presence. Location is used only to detect your block.</p>
+
+      {% if has_pushed %}
+        <button id="pushButton" class="push-btn pushed" disabled>PUSHED</button>
+        <p class="punch-done">Your punch is already recorded for this session.</p>
+      {% else %}
+        <button id="pushButton" class="push-btn">PUSH</button>
+      {% endif %}
+
+      <div id="statusMessage" class="status-msg"></div>
+    </div>
+  </main>
+
+  <script src="/static/staff.js"></script>
+</body>
+</html>

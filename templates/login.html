@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#1565c0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <title>RIT Staff Attendance</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="auth-wrap">
+  <div class="auth-box">
+    <div class="auth-header">
+      <div class="auth-logo-row">
+        <div class="auth-logo-mark" aria-hidden="true">RIT</div>
+        <div class="auth-school">
+          <div class="rit-text">rit</div>
+          <div class="school-name">Rajalakshmi Institute<br>of Technology</div>
+        </div>
+      </div>
+      <p class="auth-tagline">Staff Attendance · <span>Location Punch</span></p>
+    </div>
+
+    {% if error %}
+      <div class="err-msg" style="display:block">{{ error }}</div>
+    {% endif %}
+
+    <form method="POST" action="/login" class="login-form">
+      <div class="fld">
+        <label for="staff_id">Staff ID</label>
+        <input type="text" id="staff_id" name="staff_id" placeholder="STAFF001" required autocomplete="username" autocapitalize="characters" inputmode="text">
+      </div>
+      <div class="fld">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" placeholder="••••••••" required autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn-sign">Sign in</button>
+    </form>
+
+    <div class="demo-creds">
+      <strong>Demo login</strong><br>
+      Staff ID: any <strong>STAFF</strong> number (e.g. <strong>STAFF001</strong>, <strong>STAFF101</strong>)<br>
+      Password: <strong>staff123</strong>
+    </div>
+  </div>
+</div>
+</body>
+</html>

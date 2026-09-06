@@ -1,0 +1,100 @@
+{
+  "STAFF001": {
+    "staffId": "STAFF001",
+    "timestamp": "22:17:00",
+    "latitude": 13.040630612053585,
+    "longitude": 80.04379629717627,
+    "location": "Outside"
+  },
+  "STAFF002": {
+    "staffId": "STAFF002",
+    "timestamp": "22:19:56",
+    "latitude": 13.040612941619594,
+    "longitude": 80.04380525990747,
+    "location": "Outside"
+  },
+  "STAFF004": {
+    "staffId": "STAFF004",
+    "timestamp": "22:28:25",
+    "latitude": 13.040626252581426,
+    "longitude": 80.04385047535516,
+    "location": "Outside"
+  },
+  "STAFF006": {
+    "staffId": "STAFF006",
+    "timestamp": "22:29:18",
+    "latitude": 13.040730231596275,
+    "longitude": 80.04376296955593,
+    "location": "Outside"
+  },
+  "STAFF056": {
+    "staffId": "STAFF056",
+    "timestamp": "22:50:13",
+    "latitude": 13.040492992869497,
+    "longitude": 80.04399283869718,
+    "location": "Outside"
+  },
+  "STAFF023": {
+    "staffId": "STAFF023",
+    "timestamp": "22:51:18",
+    "latitude": 13.040508840343675,
+    "longitude": 80.04391713400548,
+    "location": "Outside"
+  },
+  "STAFF123": {
+    "staffId": "STAFF123",
+    "timestamp": "23:30:22",
+    "latitude": 13.040700870909172,
+    "longitude": 80.04380312240532,
+    "location": "Outside"
+  },
+  "STAFF456": {
+    "staffId": "STAFF456",
+    "timestamp": "11:46:30",
+    "latitude": 13.03958509997131,
+    "longitude": 80.04569148663013,
+    "location": "C Blocks (C1–C4)"
+  },
+  "STAFF678": {
+    "staffId": "STAFF678",
+    "timestamp": "12:52:25",
+    "latitude": 13.038584250000001,
+    "longitude": 80.04563365,
+    "location": "A / Admin Block"
+  },
+  "STAFF124": {
+    "staffId": "STAFF124",
+    "timestamp": "12:56:06",
+    "latitude": 13.0386527,
+    "longitude": 80.0456381,
+    "location": "Outside"
+  },
+  "STAFF008": {
+    "staffId": "STAFF008",
+    "timestamp": "12:57:16",
+    "latitude": 13.03855233133184,
+    "longitude": 80.04559639274937,
+    "location": "A / Admin Block"
+  },
+  "STAFF690": {
+    "staffId": "STAFF690",
+    "timestamp": "13:23:45",
+    "latitude": 13.038751666336795,
+    "longitude": 80.04507901844227,
+    "location": "B Block"
+  },
+  "STAFF98": {
+    "staffId": "STAFF98",
+    "timestamp": "13:39:21",
+    "latitude": 13.0381199,
+    "longitude": 80.0454167,
+    "location": "Outside"
+  },
+  "STAFF854": {
+    "staffId": "STAFF854",
+    "timestamp": "14:15:57",
+    "latitude": 13.0388546,
+    "longitude": 80.045024,
+    "location": "B Block"
+  }
+}
