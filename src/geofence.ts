@@ -56,7 +56,7 @@ export const CAMPUS_ZONES: CampusZone[] = [
     latMax: 13.0381709,
   },
   {
-    name: 'C Block',
+    name: 'C-Block',
     lonMin: 80.0454785,
     lonMax: 80.0459096,
     latMin: 13.0388561,
@@ -71,12 +71,20 @@ export const CAMPUS_ZONES: CampusZone[] = [
   },
   {
     name: 'A / Admin Block',
-    lonMin: 80.0452290,
-    lonMax: 80.0457286,
-    latMin: 13.0381506,
-    latMax: 13.0386278,
+    lonMin: 80.0452364,
+    lonMax: 80.0457732,
+    latMin: 13.0381457,
+    latMax: 13.0386539,
   },
 ];
+
+export function distanceToZoneBox(latitude: number, longitude: number, zone: CampusZone): number {
+  const clampedLat = Math.max(zone.latMin, Math.min(latitude, zone.latMax));
+  const clampedLon = Math.max(zone.lonMin, Math.min(longitude, zone.lonMax));
+  const dLat = (latitude - clampedLat) * 111000.0;
+  const dLon = (longitude - clampedLon) * 108000.0;
+  return Math.sqrt(dLat * dLat + dLon * dLon);
+}
 
 /**
  * Checks if a point falls within a bounding box.
@@ -94,20 +102,42 @@ export function isPointInBoundingBox(
   );
 }
 
+// Maximum indoor GPS drift tolerance in meters.
+export const INDOOR_DRIFT_TOLERANCE_METERS = 25.0;
+
 /**
  * Main geofencing detection function.
- * Matches coordinates against defined campus zones.
- * Returns the detected location string, or 'Outside'.
+ * Matches coordinates against defined campus zones:
+ * 1. Checks exact bounding box hit first.
+ * 2. Checks nearest block within 25m tolerance to account for indoor drift.
+ * 3. Returns 'Outside' if beyond campus threshold.
  */
 export function detectLocation(latitude: number, longitude: number): string {
   if (typeof latitude !== 'number' || typeof longitude !== 'number' || isNaN(latitude) || isNaN(longitude)) {
     return 'Outside';
   }
 
+  // Pass 1: Exact hit
   for (const zone of CAMPUS_ZONES) {
     if (isPointInBoundingBox(latitude, longitude, zone)) {
       return zone.name;
     }
+  }
+
+  // Pass 2: Nearest zone within indoor drift tolerance
+  let closestZone: CampusZone | null = null;
+  let minDistance = Infinity;
+
+  for (const zone of CAMPUS_ZONES) {
+    const dist = distanceToZoneBox(latitude, longitude, zone);
+    if (dist < minDistance) {
+      minDistance = dist;
+      closestZone = zone;
+    }
+  }
+
+  if (closestZone && minDistance <= INDOOR_DRIFT_TOLERANCE_METERS) {
+    return closestZone.name;
   }
 
   return 'Outside';

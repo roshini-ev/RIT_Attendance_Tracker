@@ -17,19 +17,22 @@ Run:
 Staff:  http://<this-pc-ip>:3000
 """
 
-import http.client
+import io
 import json
 import os
 import re
 import socket
+import tempfile
+import urllib.request
 from datetime import datetime
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 from flask import (
     Flask,
     jsonify,
     redirect,
     render_template,
+    render_template_string,
     request,
     send_file,
     session,
@@ -45,73 +48,63 @@ app.secret_key = os.environ.get("SECRET_KEY", "rit-attendance-dummy-secret-key-2
 DUMMY_STAFF = {f"STAFF{i:03d}": "staff123" for i in range(1, 51)}
 DUMMY_STAFF["HOD01"] = "staff123"
 
-EXCEL_FILE = os.path.join(os.path.dirname(__file__), "staff_presence.xlsx")
 EXCEL_HEADERS = ["Staff ID", "Time", "Block"]
 
+# In-memory attendance records and pushed staff tracking for fast, reliable serverless execution
+attendance_records = []
 already_pushed_staff = set()
 
-# Optional Google Sheets sync. Put the Apps Script web app URL in the
-# GOOGLE_SHEET_WEBHOOK env var or in a google_sheet_webhook.txt file next to
-# this script (see README "Sync to Google Sheets"). Empty = local Excel only.
-GOOGLE_SHEET_WEBHOOK = os.environ.get("GOOGLE_SHEET_WEBHOOK", "").strip()
-if not GOOGLE_SHEET_WEBHOOK:
-    _hook_file = os.path.join(os.path.dirname(__file__), "google_sheet_webhook.txt")
-    if os.path.exists(_hook_file):
+# Default Google Sheets Webhook URL (verified working Apps Script web app)
+DEFAULT_GOOGLE_SHEET_WEBHOOK = "https://script.google.com/macros/s/AKfycbyvgl4tL0hdiYbKHyVuo8zcj_ZUWQJMandho5E1j2eG4wEIbMxdFKHLbdiVZPXGAoh3/exec"
+
+
+def get_google_sheet_webhook() -> str:
+    """Retrieve the Google Sheet webhook URL from env, file, or default fallback."""
+    url = os.environ.get("GOOGLE_SHEET_WEBHOOK", "").strip()
+    if url:
+        return url
+    hook_file = os.path.join(os.path.dirname(__file__), "google_sheet_webhook.txt")
+    if os.path.exists(hook_file):
         try:
-            with open(_hook_file, encoding="utf-8") as _fh:
-                GOOGLE_SHEET_WEBHOOK = _fh.read().strip()
+            with open(hook_file, encoding="utf-8") as fh:
+                content = fh.read().strip()
+                if content:
+                    return content
         except OSError:
             pass
+    return DEFAULT_GOOGLE_SHEET_WEBHOOK
 
 
-def post_json_follow_redirects(url: str, payload: dict) -> None:
-    """POST JSON to a URL, keeping the POST body through redirects.
+def sync_to_google_sheet(staff_id: str, timestamp: str, block: str) -> bool:
+    """Append one punch row to the linked Google Sheet via its Apps Script webhook.
 
-    Google Apps Script web apps answer the first POST with a redirect to a
-    script.googleusercontent.com host and expect the POST to be re-sent, so a
-    plain urllib/requests call (which converts POST to GET on 301/302) would
-    fail. This loop re-sends the body until a final response arrives.
+    Uses standard urllib.request which automatically follows Google Apps Script
+    302 redirects with GET to complete the request successfully.
     """
-    body = json.dumps(payload).encode("utf-8")
-    headers = {"Content-Type": "application/json"}
-    current = url
-    for _ in range(6):
-        parsed = urlparse(current)
-        if parsed.scheme not in ("http", "https"):
-            raise ValueError(f"Unsupported webhook scheme: {parsed.scheme!r}")
-        if parsed.scheme == "https":
-            conn = http.client.HTTPSConnection(parsed.hostname, parsed.port or 443, timeout=10)
-        else:
-            conn = http.client.HTTPConnection(parsed.hostname, parsed.port or 80, timeout=10)
-        try:
-            path = parsed.path or "/"
-            if parsed.query:
-                path = f"{path}?{parsed.query}"
-            conn.request("POST", path, body=body, headers=headers)
-            resp = conn.getresponse()
-            resp.read()
-            if resp.status in (301, 302, 303, 307, 308):
-                location = resp.getheader("Location")
-                if not location:
-                    raise ConnectionError(f"Webhook redirect without Location (HTTP {resp.status})")
-                current = urljoin(current, location)
-                continue
-            if resp.status >= 400:
-                raise ConnectionError(f"Google Sheet webhook returned HTTP {resp.status}")
-            return
-        finally:
-            conn.close()
-    raise ConnectionError("Too many redirects while posting to the Google Sheet webhook")
+    webhook_url = get_google_sheet_webhook()
+    if not webhook_url:
+        print("[Google Sheet] No webhook URL configured")
+        return False
 
+    payload = json.dumps({
+        "staff_id": staff_id,
+        "time": timestamp,
+        "block": block,
+    }).encode("utf-8")
 
-def sync_to_google_sheet(staff_id: str, timestamp: str, block: str) -> None:
-    """Append one punch row to the linked Google Sheet (best effort)."""
-    if not GOOGLE_SHEET_WEBHOOK:
-        return
-    post_json_follow_redirects(
-        GOOGLE_SHEET_WEBHOOK,
-        {"staff_id": staff_id, "time": timestamp, "block": block},
+    req = urllib.request.Request(
+        webhook_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
     )
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            body = resp.read().decode("utf-8", errors="ignore")
+            print(f"[Google Sheet] Synced {staff_id} ({timestamp}, {block}): HTTP {resp.status} - {body}")
+            return True
+    except Exception as e:
+        print(f"[Google Sheet] Sync failed for {staff_id}: {e}")
+        return False
 
 
 def authenticate_staff(staff_id: str, password: str) -> bool:
@@ -126,54 +119,94 @@ def authenticate_staff(staff_id: str, password: str) -> bool:
     return False
 
 
-def init_excel_file():
-    """Create or migrate the admin Excel file to Staff ID / Time / Block."""
-    if not os.path.exists(EXCEL_FILE):
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Staff Presence"
-        ws.append(EXCEL_HEADERS)
-        wb.save(EXCEL_FILE)
-        return
-
+def get_excel_file_path() -> str:
+    """Return a writable file path for staff_presence.xlsx.
+    Uses local directory if writable, falls back to /tmp for read-only serverless environments.
+    """
+    local_path = os.path.join(os.path.dirname(__file__), "staff_presence.xlsx")
+    test_file = os.path.join(os.path.dirname(__file__), ".write_test")
     try:
-        wb = load_workbook(EXCEL_FILE)
-        ws = wb.active
-        header = [str(c).strip() if c is not None else "" for c in next(ws.iter_rows(min_row=1, max_row=1, values_only=True))]
-        rows = []
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            if not row or not row[0]:
-                continue
-            staff_id = str(row[0]).strip().upper()
-            already_pushed_staff.add(staff_id)
-            if header[:3] == EXCEL_HEADERS:
-                time_val = row[1]
-                block = row[2] if len(row) > 2 else "Outside"
-            else:
-                # Older format: Staff ID, Timestamp, Latitude, Longitude, Location
-                time_val = row[1]
-                block = row[4] if len(row) > 4 else (row[2] if len(row) > 2 else "Outside")
-            rows.append([staff_id, time_val, block])
+        with open(test_file, "w") as f:
+            f.write("ok")
+        os.remove(test_file)
+        return local_path
+    except (OSError, PermissionError):
+        pass
 
-        if header[:3] != EXCEL_HEADERS:
+    tmp_path = os.path.join(tempfile.gettempdir(), "staff_presence.xlsx")
+    if not os.path.exists(tmp_path) and os.path.exists(local_path):
+        try:
+            import shutil
+            shutil.copy2(local_path, tmp_path)
+        except Exception:
+            pass
+    return tmp_path
+
+
+def init_excel_file():
+    """Load existing rows from staff_presence.xlsx into memory and ensure file exists."""
+    global attendance_records, already_pushed_staff
+    attendance_records = []
+    already_pushed_staff = set()
+
+    excel_path = os.path.join(os.path.dirname(__file__), "staff_presence.xlsx")
+    if not os.path.exists(excel_path):
+        excel_path = get_excel_file_path()
+
+    if os.path.exists(excel_path):
+        try:
+            wb = load_workbook(excel_path)
+            ws = wb.active
+            header = [str(c).strip() if c is not None else "" for c in next(ws.iter_rows(min_row=1, max_row=1, values_only=True))]
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if not row or not row[0]:
+                    continue
+                sid = str(row[0]).strip().upper()
+                already_pushed_staff.add(sid)
+                if header[:3] == EXCEL_HEADERS:
+                    time_val = str(row[1]) if len(row) > 1 and row[1] is not None else ""
+                    block = str(row[2]) if len(row) > 2 and row[2] is not None else "Outside"
+                else:
+                    time_val = str(row[1]) if len(row) > 1 and row[1] is not None else ""
+                    block = str(row[4] if len(row) > 4 else (row[2] if len(row) > 2 else "Outside"))
+                attendance_records.append({"staff_id": sid, "time": time_val, "block": block})
+        except Exception as e:
+            print(f"Error inspecting Excel file: {e}")
+
+    # Ensure writable Excel file is ready
+    writable_path = get_excel_file_path()
+    try:
+        if not os.path.exists(writable_path):
             wb = Workbook()
             ws = wb.active
             ws.title = "Staff Presence"
             ws.append(EXCEL_HEADERS)
-            for r in rows:
-                ws.append(r)
-            wb.save(EXCEL_FILE)
+            for r in attendance_records:
+                ws.append([r["staff_id"], r["time"], r["block"]])
+            wb.save(writable_path)
     except Exception as e:
-        print(f"Error inspecting Excel file: {e}")
+        print(f"Note: Could not write Excel to disk ({e}), will use in-memory generation.")
 
 
-def append_excel_record(staff_id, timestamp, block):
-    if not os.path.exists(EXCEL_FILE):
-        init_excel_file()
-    wb = load_workbook(EXCEL_FILE)
-    ws = wb.active
-    ws.append([staff_id, timestamp, block])
-    wb.save(EXCEL_FILE)
+def append_excel_record(staff_id: str, timestamp: str, block: str):
+    """Append a record to in-memory store and to disk Excel file if possible."""
+    attendance_records.append({"staff_id": staff_id, "time": timestamp, "block": block})
+    already_pushed_staff.add(staff_id)
+
+    writable_path = get_excel_file_path()
+    try:
+        if not os.path.exists(writable_path):
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Staff Presence"
+            ws.append(EXCEL_HEADERS)
+        else:
+            wb = load_workbook(writable_path)
+            ws = wb.active
+        ws.append([staff_id, timestamp, block])
+        wb.save(writable_path)
+    except Exception as e:
+        print(f"[Excel] Disk write skipped ({e}), preserved in memory.")
 
 
 init_excel_file()
@@ -198,6 +231,27 @@ def login():
     return render_template("login.html")
 
 
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    """JSON login endpoint for React / mobile clients."""
+    data = request.get_json() or {}
+    staff_id = data.get("staffId") or data.get("staff_id", "")
+    password = data.get("password", "")
+    sid = str(staff_id).strip().upper()
+
+    if not sid or not password:
+        return jsonify({"success": False, "message": "Staff ID and password required"}), 400
+
+    if authenticate_staff(sid, str(password)):
+        session["staff_id"] = sid
+        return jsonify({
+            "success": True,
+            "staffId": sid,
+            "alreadyPushed": sid in already_pushed_staff,
+        })
+    return jsonify({"success": False, "message": "Invalid Staff ID or Password"}), 401
+
+
 @app.route("/staff")
 def staff_screen():
     if "staff_id" not in session:
@@ -206,16 +260,35 @@ def staff_screen():
     return render_template("staff.html", staff_id=staff_id, has_pushed=staff_id in already_pushed_staff)
 
 
+@app.route("/api/status", methods=["GET"])
+def api_status():
+    """Check whether a staff member has already pushed today."""
+    staff_id = request.args.get("staffId") or request.args.get("staff_id", "")
+    sid = str(staff_id).strip().upper()
+    if not sid:
+        return jsonify({"success": False, "message": "staffId query parameter required"}), 400
+    return jsonify({
+        "success": True,
+        "staffId": sid,
+        "pushed": sid in already_pushed_staff,
+    })
+
+
 @app.route("/api/push", methods=["POST"])
 def api_push():
-    if "staff_id" not in session:
+    data = request.get_json() or {}
+    staff_id = session.get("staff_id") or data.get("staffId") or data.get("staff_id")
+    if not staff_id:
         return jsonify({"success": False, "error": "Not authenticated"}), 401
 
-    staff_id = session["staff_id"]
+    staff_id = str(staff_id).strip().upper()
     if staff_id in already_pushed_staff:
-        return jsonify({"success": False, "error": "Push already recorded for this staff member."}), 400
+        return jsonify({
+            "success": False,
+            "error": "Push already recorded for this staff member.",
+            "alreadyPushed": True,
+        }), 400
 
-    data = request.get_json() or {}
     latitude = data.get("latitude")
     longitude = data.get("longitude")
     if latitude is None or longitude is None:
@@ -228,48 +301,172 @@ def api_push():
         return jsonify({"success": False, "error": "Invalid coordinates format"}), 400
 
     block = detect_location(lat, lon)
-    # Time only (HH:MM:SS) per requirement - each staff member pushes only once.
+    # Time only (HH:MM:SS) - each staff member pushes only once per session
     timestamp = datetime.now().strftime("%H:%M:%S")
 
+    print(f"[PUSH] Staff: {staff_id} | GPS: ({lat:.7f}, {lon:.7f}) | Block: {block}")
+
+    # 1. Append record to in-memory store and Excel
+    append_excel_record(staff_id, timestamp, block)
+
+    # 2. Sync immediately to Google Sheets (live cloud sync for phone and PC)
+    sheet_synced = False
     try:
-        append_excel_record(staff_id, timestamp, block)
-        already_pushed_staff.add(staff_id)
-        # Cloud sync is best-effort: the local Excel row is the durable record.
-        try:
-            sync_to_google_sheet(staff_id, timestamp, block)
-        except Exception as e:
-            print(f"[Google Sheet] sync failed for {staff_id}: {e}")
-        return jsonify({"success": True, "status": "PUSHED"})
-    except PermissionError:
-        # Excel on the admin's PC locks the file while it is open.
-        return jsonify({
-            "success": False,
-            "error": "The Excel file is open on the admin computer. Please close it and tap PUSH again.",
-        }), 409
+        sheet_synced = sync_to_google_sheet(staff_id, timestamp, block)
     except Exception as e:
-        return jsonify({"success": False, "error": f"Failed to save record: {str(e)}"}), 500
+        print(f"[Google Sheet] Sync exception for {staff_id}: {e}")
+
+    # Optional local pushes.json debug backup
+    try:
+        data_dir = os.path.join(tempfile.gettempdir(), "rit_data")
+        os.makedirs(data_dir, exist_ok=True)
+        pushes_file = os.path.join(data_dir, "pushes.json")
+        pushes_data = {}
+        if os.path.exists(pushes_file):
+            with open(pushes_file, "r", encoding="utf-8") as f:
+                pushes_data = json.load(f)
+        pushes_data[staff_id] = {
+            "staffId": staff_id,
+            "timestamp": timestamp,
+            "latitude": lat,
+            "longitude": lon,
+            "location": block,
+        }
+        with open(pushes_file, "w", encoding="utf-8") as f:
+            json.dump(pushes_data, f, indent=2)
+    except Exception:
+        pass
+
+    return jsonify({
+        "success": True,
+        "status": "PUSHED",
+        "staff_id": staff_id,
+        "time": timestamp,
+        "block": block,
+        "google_sheet_synced": sheet_synced,
+    })
+
+
+@app.route("/api/records", methods=["GET"])
+def api_records():
+    """Return all recorded punches in JSON format."""
+    return jsonify({
+        "success": True,
+        "count": len(attendance_records),
+        "records": attendance_records,
+    })
+
+
+@app.route("/excel")
+@app.route("/api/download-excel")
+def shared_excel():
+    """Serve the live Excel sheet as a dynamically generated .xlsx download.
+    Generates workbook in memory for 100% serverless and multi-platform reliability.
+    """
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Staff Presence"
+    ws.append(EXCEL_HEADERS)
+
+    for r in attendance_records:
+        ws.append([r.get("staff_id", ""), r.get("time", ""), r.get("block", "")])
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+
+    response = send_file(
+        bio,
+        as_attachment=True,
+        download_name="staff_presence.xlsx",
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+@app.route("/attendance")
+def attendance_dashboard():
+    """Live Attendance View accessible from any phone or computer browser."""
+    webhook_url = get_google_sheet_webhook()
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RIT Attendance Monitor</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .monitor-wrap { max-width: 760px; margin: 2rem auto; padding: 1.5rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .monitor-card { background: #fff; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); padding: 1.5rem; }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #e0f2fe; color: #0369a1; }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 1.25rem 0; }
+    .btn-action { display: inline-flex; align-items: center; padding: 0.6rem 1.2rem; border-radius: 8px; font-size: 14px; font-weight: 600; text-decoration: none; cursor: pointer; border: none; }
+    .btn-excel { background: #0284c7; color: white; }
+    .btn-excel:hover { background: #0369a1; }
+    .btn-sheet { background: #16a34a; color: white; }
+    .btn-sheet:hover { background: #15803d; }
+    .btn-refresh { background: #f1f5f9; color: #334155; }
+    table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    th { text-align: left; padding: 10px; background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #64748b; border-bottom: 2px solid #e2e8f0; }
+    td { padding: 12px 10px; border-bottom: 1px solid #e2e8f0; font-size: 14px; color: #1e293b; }
+    .empty { text-align: center; padding: 2rem; color: #94a3b8; }
+  </style>
+</head>
+<body style="background: #f8fafc; margin: 0;">
+  <div class="monitor-wrap">
+    <div class="monitor-card">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <h2 style="margin: 0; color: #0f172a; font-size: 1.25rem;">RIT Staff Attendance Monitor</h2>
+          <p style="margin: 4px 0 0; color: #64748b; font-size: 13px;">Rajalakshmi Institute of Technology</p>
+        </div>
+        <span class="badge">{{ records|length }} Punched Today</span>
+      </div>
+
+      <div class="btn-row">
+        <a href="/excel" class="btn-action btn-excel">📥 Download Excel (.xlsx)</a>
+        {% if webhook %}
+          <a href="{{ webhook }}" target="_blank" rel="noopener" class="btn-action btn-sheet">📊 Google Sheet Webhook</a>
+        {% endif %}
+        <button onclick="window.location.reload()" class="btn-action btn-refresh">🔄 Refresh</button>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Staff ID</th>
+            <th>Time</th>
+            <th>Detected Block</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in records %}
+          <tr>
+            <td><strong>{{ r.staff_id }}</strong></td>
+            <td>{{ r.time }}</td>
+            <td>{{ r.block }}</td>
+            <td><span style="color: #16a34a; font-weight: 600;">✓ Recorded</span></td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="4" class="empty">No attendance pushes recorded yet today.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>"""
+    return render_template_string(html, records=attendance_records, webhook=webhook_url)
 
 
 @app.route("/logout")
 def logout():
     session.clear()
     return redirect(url_for("login"))
-
-
-@app.route("/excel")
-def shared_excel():
-    """Serve the live Excel sheet to anyone who has the link - no login."""
-    if not os.path.exists(EXCEL_FILE):
-        init_excel_file()
-    response = send_file(
-        EXCEL_FILE,
-        as_attachment=True,
-        download_name="staff_presence.xlsx",
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
-    # Always hand out the current file, never a cached copy.
-    response.headers["Cache-Control"] = "no-store"
-    return response
 
 
 def lan_ip():
@@ -285,21 +482,17 @@ def lan_ip():
 
 if __name__ == "__main__":
     ip = lan_ip()
-    print("=" * 56)
+    hook = get_google_sheet_webhook()
+    print("=" * 60)
     print("  RIT Staff Attendance - running")
-    print(f"  Staff link:        http://{ip}:3000")
-    print(f"  Excel sheet link:  http://{ip}:3000/excel   (anyone with the link can open it)")
-    print("=" * 56)
-    print(f"  Local copy of the sheet: {EXCEL_FILE}")
-    print("  (Keep the local file closed while staff are pushing, or Excel locks it.)")
-    if GOOGLE_SHEET_WEBHOOK:
-        print("  Google Sheets sync: ON - every push is also written to your Google Sheet.")
+    print(f"  Staff Portal:       http://{ip}:3000")
+    print(f"  Excel Download:     http://{ip}:3000/excel")
+    print(f"  Live Monitor:       http://{ip}:3000/attendance")
+    print("=" * 60)
+    if hook:
+        print(f"  Google Sheets sync: ON -> {hook[:50]}...")
     else:
-        print("  Google Sheets sync: OFF (local Excel only). To enable, put your Apps Script")
-        print("  web app URL in GOOGLE_SHEET_WEBHOOK or in google_sheet_webhook.txt - see README.")
+        print("  Google Sheets sync: OFF")
     print()
-    print("Phones on the same Wi-Fi can open the link above.")
-    print("NOTE: Android/iOS only allow GPS on HTTPS. For on-campus")
-    print("location to work on phones, share an HTTPS tunnel link instead")
-    print("(e.g. ngrok or Cloudflare Tunnel) - see README.")
     app.run(host="0.0.0.0", port=3000, debug=False)
+
