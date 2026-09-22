@@ -110,13 +110,13 @@ def sync_to_google_sheet(staff_id: str, timestamp: str, block: str) -> bool:
 def authenticate_staff(staff_id: str, password: str) -> bool:
     sid = str(staff_id).strip().upper()
     pwd = str(password).strip()
-    if sid == "ADMIN01":
-        return False
     if sid in DUMMY_STAFF and DUMMY_STAFF[sid] == pwd:
         return True
     if re.match(r"^STAFF\d+$", sid) and pwd == "staff123":
         return True
     return False
+
+
 
 
 def get_excel_file_path() -> str:
@@ -254,10 +254,10 @@ def api_login():
 
 @app.route("/staff")
 def staff_screen():
-    if "staff_id" not in session:
+    sid = session.get("staff_id")
+    if not sid:
         return redirect(url_for("login"))
-    staff_id = session["staff_id"]
-    return render_template("staff.html", staff_id=staff_id, has_pushed=staff_id in already_pushed_staff)
+    return render_template("staff.html", staff_id=sid, has_pushed=sid in already_pushed_staff)
 
 
 @app.route("/api/status", methods=["GET"])
@@ -301,7 +301,6 @@ def api_push():
         return jsonify({"success": False, "error": "Invalid coordinates format"}), 400
 
     block = detect_location(lat, lon)
-    # Time only (HH:MM:SS) - each staff member pushes only once per session
     timestamp = datetime.now().strftime("%H:%M:%S")
 
     print(f"[PUSH] Staff: {staff_id} | GPS: ({lat:.7f}, {lon:.7f}) | Block: {block}")
@@ -387,8 +386,7 @@ def shared_excel():
 
 @app.route("/attendance")
 def attendance_dashboard():
-    """Live Attendance View accessible from any phone or computer browser."""
-    webhook_url = get_google_sheet_webhook()
+    """Live Attendance View."""
     html = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -400,13 +398,12 @@ def attendance_dashboard():
     .monitor-wrap { max-width: 760px; margin: 2rem auto; padding: 1.5rem; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     .monitor-card { background: #fff; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); padding: 1.5rem; }
     .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: #e0f2fe; color: #0369a1; }
-    .btn-row { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 1.25rem 0; }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 1.25rem 0; align-items: center; }
     .btn-action { display: inline-flex; align-items: center; padding: 0.6rem 1.2rem; border-radius: 8px; font-size: 14px; font-weight: 600; text-decoration: none; cursor: pointer; border: none; }
     .btn-excel { background: #0284c7; color: white; }
     .btn-excel:hover { background: #0369a1; }
-    .btn-sheet { background: #16a34a; color: white; }
-    .btn-sheet:hover { background: #15803d; }
     .btn-refresh { background: #f1f5f9; color: #334155; }
+    .btn-logout { background: #fee2e2; color: #991b1b; margin-left: auto; }
     table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
     th { text-align: left; padding: 10px; background: #f8fafc; font-size: 12px; text-transform: uppercase; color: #64748b; border-bottom: 2px solid #e2e8f0; }
     td { padding: 12px 10px; border-bottom: 1px solid #e2e8f0; font-size: 14px; color: #1e293b; }
@@ -426,9 +423,6 @@ def attendance_dashboard():
 
       <div class="btn-row">
         <a href="/excel" class="btn-action btn-excel">📥 Download Excel (.xlsx)</a>
-        {% if webhook %}
-          <a href="{{ webhook }}" target="_blank" rel="noopener" class="btn-action btn-sheet">📊 Google Sheet Webhook</a>
-        {% endif %}
         <button onclick="window.location.reload()" class="btn-action btn-refresh">🔄 Refresh</button>
       </div>
 
@@ -460,7 +454,7 @@ def attendance_dashboard():
   </div>
 </body>
 </html>"""
-    return render_template_string(html, records=attendance_records, webhook=webhook_url)
+    return render_template_string(html, records=attendance_records)
 
 
 @app.route("/logout")
