@@ -24,11 +24,12 @@ import re
 import socket
 import tempfile
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from flask import (
     Flask,
+    has_request_context,
     jsonify,
     redirect,
     render_template,
@@ -44,15 +45,100 @@ from geofence import detect_location
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "rit-attendance-dummy-secret-key-2026")
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 
 DUMMY_STAFF = {f"STAFF{i:03d}": "staff123" for i in range(1, 51)}
 DUMMY_STAFF["HOD01"] = "staff123"
 
 EXCEL_HEADERS = ["Staff ID", "Time", "Block"]
 
-# In-memory attendance records and pushed staff tracking for fast, reliable serverless execution
+# Indian Standard Time (IST, UTC+05:30) for precise daily cutoff at 00:00 midnight
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def get_ist_now() -> datetime:
+    """Return the current datetime in Indian Standard Time (IST)."""
+    return datetime.now(IST)
+
+
+def get_today_ist() -> str:
+    """Return today's date formatted as YYYY-MM-DD in IST."""
+    return get_ist_now().strftime("%Y-%m-%d")
+
+
+# In-memory attendance records and daily pushed staff tracking (staff_id -> YYYY-MM-DD)
 attendance_records = []
-already_pushed_staff = set()
+pushed_today = {}
+
+
+def get_persisted_pushes() -> dict:
+    """Read pushes saved in /tmp/rit_data/pushes.json to survive intra-day serverless restarts."""
+    try:
+        pushes_file = os.path.join(tempfile.gettempdir(), "rit_data", "pushes.json")
+        if os.path.exists(pushes_file):
+            with open(pushes_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def has_pushed_today(staff_id: str) -> bool:
+    """Check if the staff member has already recorded attendance today (once per day rule)."""
+    if not staff_id:
+        return False
+    sid = str(staff_id).strip().upper()
+    today = get_today_ist()
+
+    # 1. In-memory dictionary for today
+    if pushed_today.get(sid) == today:
+        return True
+
+    # 2. Staff phone session cookie (persists across tab and browser reopens on the staff phone)
+    if has_request_context():
+        if session.get("staff_id") == sid and session.get("last_pushed_date") == today:
+            pushed_today[sid] = today
+            return True
+
+    # 3. Serverless temp file cache
+    persisted = get_persisted_pushes()
+    if sid in persisted and persisted[sid].get("date") == today:
+        pushed_today[sid] = today
+        return True
+
+    return False
+
+
+def record_push_today(staff_id: str, timestamp: str, block: str, lat: float = None, lon: float = None):
+    """Mark a staff member as having pushed today."""
+    sid = str(staff_id).strip().upper()
+    today = get_today_ist()
+
+    pushed_today[sid] = today
+    if has_request_context():
+        session["last_pushed_date"] = today
+        session.permanent = True
+
+    try:
+        data_dir = os.path.join(tempfile.gettempdir(), "rit_data")
+        os.makedirs(data_dir, exist_ok=True)
+        pushes_file = os.path.join(data_dir, "pushes.json")
+        pushes_data = get_persisted_pushes()
+        entry = {
+            "staffId": sid,
+            "date": today,
+            "timestamp": timestamp,
+            "location": block,
+        }
+        if lat is not None and lon is not None:
+            entry["latitude"] = lat
+            entry["longitude"] = lon
+        pushes_data[sid] = entry
+        with open(pushes_file, "w", encoding="utf-8") as f:
+            json.dump(pushes_data, f, indent=2)
+    except Exception:
+        pass
+
 
 # Default Google Sheets Webhook URL (verified working Apps Script web app)
 DEFAULT_GOOGLE_SHEET_WEBHOOK = "https://script.google.com/macros/s/AKfycbwre5bpwFPjLs7PmAMNvdfaZzx1LgYjP8UbUHghUsuJgnGAO3himq9MUethM1xZPyqW/exec"
@@ -145,9 +231,8 @@ def get_excel_file_path() -> str:
 
 def init_excel_file():
     """Load existing rows from staff_presence.xlsx into memory and ensure file exists."""
-    global attendance_records, already_pushed_staff
+    global attendance_records
     attendance_records = []
-    already_pushed_staff = set()
 
     excel_path = os.path.join(os.path.dirname(__file__), "staff_presence.xlsx")
     if not os.path.exists(excel_path):
@@ -162,7 +247,6 @@ def init_excel_file():
                 if not row or not row[0]:
                     continue
                 sid = str(row[0]).strip().upper()
-                already_pushed_staff.add(sid)
                 if header[:3] == EXCEL_HEADERS:
                     time_val = str(row[1]) if len(row) > 1 and row[1] is not None else ""
                     block = str(row[2]) if len(row) > 2 and row[2] is not None else "Outside"
@@ -191,7 +275,6 @@ def init_excel_file():
 def append_excel_record(staff_id: str, timestamp: str, block: str):
     """Append a record to in-memory store and to disk Excel file if possible."""
     attendance_records.append({"staff_id": staff_id, "time": timestamp, "block": block})
-    already_pushed_staff.add(staff_id)
 
     writable_path = get_excel_file_path()
     try:
@@ -226,6 +309,7 @@ def login():
         password = request.form.get("password", "").strip()
         if authenticate_staff(staff_id, password):
             session["staff_id"] = staff_id
+            session.permanent = True
             return redirect(url_for("staff_screen"))
         return render_template("login.html", error="Invalid Staff ID or Password")
     return render_template("login.html")
@@ -244,10 +328,11 @@ def api_login():
 
     if authenticate_staff(sid, str(password)):
         session["staff_id"] = sid
+        session.permanent = True
         return jsonify({
             "success": True,
             "staffId": sid,
-            "alreadyPushed": sid in already_pushed_staff,
+            "alreadyPushed": has_pushed_today(sid),
         })
     return jsonify({"success": False, "message": "Invalid Staff ID or Password"}), 401
 
@@ -257,7 +342,7 @@ def staff_screen():
     sid = session.get("staff_id")
     if not sid:
         return redirect(url_for("login"))
-    return render_template("staff.html", staff_id=sid, has_pushed=sid in already_pushed_staff)
+    return render_template("staff.html", staff_id=sid, has_pushed=has_pushed_today(sid))
 
 
 @app.route("/api/status", methods=["GET"])
@@ -270,7 +355,7 @@ def api_status():
     return jsonify({
         "success": True,
         "staffId": sid,
-        "pushed": sid in already_pushed_staff,
+        "pushed": has_pushed_today(sid),
     })
 
 
@@ -282,10 +367,10 @@ def api_push():
         return jsonify({"success": False, "error": "Not authenticated"}), 401
 
     staff_id = str(staff_id).strip().upper()
-    if staff_id in already_pushed_staff:
+    if has_pushed_today(staff_id):
         return jsonify({
             "success": False,
-            "error": "Push already recorded for this staff member.",
+            "error": "You have already recorded your attendance for today.",
             "alreadyPushed": True,
         }), 400
 
@@ -301,11 +386,12 @@ def api_push():
         return jsonify({"success": False, "error": "Invalid coordinates format"}), 400
 
     block = detect_location(lat, lon)
-    timestamp = datetime.now().strftime("%H:%M:%S")
+    timestamp = get_ist_now().strftime("%H:%M:%S")
 
     print(f"[PUSH] Staff: {staff_id} | GPS: ({lat:.7f}, {lon:.7f}) | Block: {block}")
 
-    # 1. Append record to in-memory store and Excel
+    # 1. Mark staff as pushed today and append to stores
+    record_push_today(staff_id, timestamp, block, lat, lon)
     append_excel_record(staff_id, timestamp, block)
 
     # 2. Sync immediately to Google Sheets (live cloud sync for phone and PC)
@@ -314,27 +400,6 @@ def api_push():
         sheet_synced = sync_to_google_sheet(staff_id, timestamp, block)
     except Exception as e:
         print(f"[Google Sheet] Sync exception for {staff_id}: {e}")
-
-    # Optional local pushes.json debug backup
-    try:
-        data_dir = os.path.join(tempfile.gettempdir(), "rit_data")
-        os.makedirs(data_dir, exist_ok=True)
-        pushes_file = os.path.join(data_dir, "pushes.json")
-        pushes_data = {}
-        if os.path.exists(pushes_file):
-            with open(pushes_file, "r", encoding="utf-8") as f:
-                pushes_data = json.load(f)
-        pushes_data[staff_id] = {
-            "staffId": staff_id,
-            "timestamp": timestamp,
-            "latitude": lat,
-            "longitude": lon,
-            "location": block,
-        }
-        with open(pushes_file, "w", encoding="utf-8") as f:
-            json.dump(pushes_data, f, indent=2)
-    except Exception:
-        pass
 
     return jsonify({
         "success": True,
