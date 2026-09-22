@@ -55,7 +55,7 @@ attendance_records = []
 already_pushed_staff = set()
 
 # Default Google Sheets Webhook URL (verified working Apps Script web app)
-DEFAULT_GOOGLE_SHEET_WEBHOOK = "https://script.google.com/macros/s/AKfycbyvgl4tL0hdiYbKHyVuo8zcj_ZUWQJMandho5E1j2eG4wEIbMxdFKHLbdiVZPXGAoh3/exec"
+DEFAULT_GOOGLE_SHEET_WEBHOOK = "https://script.google.com/macros/s/AKfycbwre5bpwFPjLs7PmAMNvdfaZzx1LgYjP8UbUHghUsuJgnGAO3himq9MUethM1xZPyqW/exec"
 
 
 def get_google_sheet_webhook() -> str:
@@ -98,7 +98,7 @@ def sync_to_google_sheet(staff_id: str, timestamp: str, block: str) -> bool:
         headers={"Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=12) as resp:
+        with urllib.request.urlopen(req, timeout=25) as resp:
             body = resp.read().decode("utf-8", errors="ignore")
             print(f"[Google Sheet] Synced {staff_id} ({timestamp}, {block}): HTTP {resp.status} - {body}")
             return True
