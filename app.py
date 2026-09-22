@@ -50,7 +50,7 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 DUMMY_STAFF = {f"STAFF{i:03d}": "staff123" for i in range(1, 51)}
 DUMMY_STAFF["HOD01"] = "staff123"
 
-EXCEL_HEADERS = ["Staff ID", "Time", "Block"]
+EXCEL_HEADERS = ["Staff ID", "Date", "Time", "Block"]
 
 # Indian Standard Time (IST, UTC+05:30) for precise daily cutoff at 00:00 midnight
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -161,7 +161,7 @@ def get_google_sheet_webhook() -> str:
     return DEFAULT_GOOGLE_SHEET_WEBHOOK
 
 
-def sync_to_google_sheet(staff_id: str, timestamp: str, block: str) -> bool:
+def sync_to_google_sheet(staff_id: str, date_str: str, timestamp: str, block: str) -> bool:
     """Append one punch row to the linked Google Sheet via its Apps Script webhook.
 
     Uses standard urllib.request which automatically follows Google Apps Script
@@ -174,6 +174,7 @@ def sync_to_google_sheet(staff_id: str, timestamp: str, block: str) -> bool:
 
     payload = json.dumps({
         "staff_id": staff_id,
+        "date": date_str,
         "time": timestamp,
         "block": block,
     }).encode("utf-8")
@@ -247,13 +248,19 @@ def init_excel_file():
                 if not row or not row[0]:
                     continue
                 sid = str(row[0]).strip().upper()
-                if header[:3] == EXCEL_HEADERS:
+                if header[:4] == EXCEL_HEADERS:
+                    date_val = str(row[1]) if len(row) > 1 and row[1] is not None else ""
+                    time_val = str(row[2]) if len(row) > 2 and row[2] is not None else ""
+                    block = str(row[3]) if len(row) > 3 and row[3] is not None else "Outside"
+                elif header[:3] == ["Staff ID", "Time", "Block"]:
+                    date_val = ""
                     time_val = str(row[1]) if len(row) > 1 and row[1] is not None else ""
                     block = str(row[2]) if len(row) > 2 and row[2] is not None else "Outside"
                 else:
+                    date_val = ""
                     time_val = str(row[1]) if len(row) > 1 and row[1] is not None else ""
                     block = str(row[4] if len(row) > 4 else (row[2] if len(row) > 2 else "Outside"))
-                attendance_records.append({"staff_id": sid, "time": time_val, "block": block})
+                attendance_records.append({"staff_id": sid, "date": date_val, "time": time_val, "block": block})
         except Exception as e:
             print(f"Error inspecting Excel file: {e}")
 
@@ -266,15 +273,15 @@ def init_excel_file():
             ws.title = "Staff Presence"
             ws.append(EXCEL_HEADERS)
             for r in attendance_records:
-                ws.append([r["staff_id"], r["time"], r["block"]])
+                ws.append([r["staff_id"], r.get("date", ""), r["time"], r["block"]])
             wb.save(writable_path)
     except Exception as e:
         print(f"Note: Could not write Excel to disk ({e}), will use in-memory generation.")
 
 
-def append_excel_record(staff_id: str, timestamp: str, block: str):
+def append_excel_record(staff_id: str, date_str: str, timestamp: str, block: str):
     """Append a record to in-memory store and to disk Excel file if possible."""
-    attendance_records.append({"staff_id": staff_id, "time": timestamp, "block": block})
+    attendance_records.append({"staff_id": staff_id, "date": date_str, "time": timestamp, "block": block})
 
     writable_path = get_excel_file_path()
     try:
@@ -286,7 +293,7 @@ def append_excel_record(staff_id: str, timestamp: str, block: str):
         else:
             wb = load_workbook(writable_path)
             ws = wb.active
-        ws.append([staff_id, timestamp, block])
+        ws.append([staff_id, date_str, timestamp, block])
         wb.save(writable_path)
     except Exception as e:
         print(f"[Excel] Disk write skipped ({e}), preserved in memory.")
@@ -386,18 +393,20 @@ def api_push():
         return jsonify({"success": False, "error": "Invalid coordinates format"}), 400
 
     block = detect_location(lat, lon)
-    timestamp = get_ist_now().strftime("%H:%M:%S")
+    now_ist = get_ist_now()
+    date_str = now_ist.strftime("%Y-%m-%d")
+    timestamp = now_ist.strftime("%H:%M:%S")
 
-    print(f"[PUSH] Staff: {staff_id} | GPS: ({lat:.7f}, {lon:.7f}) | Block: {block}")
+    print(f"[PUSH] Staff: {staff_id} | Date: {date_str} | Time: {timestamp} | GPS: ({lat:.7f}, {lon:.7f}) | Block: {block}")
 
     # 1. Mark staff as pushed today and append to stores
     record_push_today(staff_id, timestamp, block, lat, lon)
-    append_excel_record(staff_id, timestamp, block)
+    append_excel_record(staff_id, date_str, timestamp, block)
 
     # 2. Sync immediately to Google Sheets (live cloud sync for phone and PC)
     sheet_synced = False
     try:
-        sheet_synced = sync_to_google_sheet(staff_id, timestamp, block)
+        sheet_synced = sync_to_google_sheet(staff_id, date_str, timestamp, block)
     except Exception as e:
         print(f"[Google Sheet] Sync exception for {staff_id}: {e}")
 
@@ -405,6 +414,7 @@ def api_push():
         "success": True,
         "status": "PUSHED",
         "staff_id": staff_id,
+        "date": date_str,
         "time": timestamp,
         "block": block,
         "google_sheet_synced": sheet_synced,
@@ -433,7 +443,7 @@ def shared_excel():
     ws.append(EXCEL_HEADERS)
 
     for r in attendance_records:
-        ws.append([r.get("staff_id", ""), r.get("time", ""), r.get("block", "")])
+        ws.append([r.get("staff_id", ""), r.get("date", ""), r.get("time", ""), r.get("block", "")])
 
     bio = io.BytesIO()
     wb.save(bio)
@@ -495,6 +505,7 @@ def attendance_dashboard():
         <thead>
           <tr>
             <th>Staff ID</th>
+            <th>Date</th>
             <th>Time</th>
             <th>Detected Block</th>
             <th>Status</th>
@@ -504,13 +515,14 @@ def attendance_dashboard():
           {% for r in records %}
           <tr>
             <td><strong>{{ r.staff_id }}</strong></td>
+            <td>{{ r.date or '' }}</td>
             <td>{{ r.time }}</td>
             <td>{{ r.block }}</td>
             <td><span style="color: #16a34a; font-weight: 600;">✓ Recorded</span></td>
           </tr>
           {% else %}
           <tr>
-            <td colspan="4" class="empty">No attendance pushes recorded yet today.</td>
+            <td colspan="5" class="empty">No attendance pushes recorded yet today.</td>
           </tr>
           {% endfor %}
         </tbody>
