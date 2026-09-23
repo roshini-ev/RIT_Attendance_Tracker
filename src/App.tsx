@@ -42,21 +42,29 @@ export default function App() {
   // Check on load whether this staff member has already pushed
   useEffect(() => {
     if (staffId) {
+      setHasPushed(false);
       // Check server status
       fetch(`/api/status?staffId=${encodeURIComponent(staffId)}`)
         .then((res) => res.json())
         .then((data) => {
           if (data && data.pushed) {
             setHasPushed(true);
+          } else {
+            setHasPushed(false);
           }
         })
         .catch(() => {
           // If server call fails, check local fallback
+          const today = new Date().toISOString().slice(0, 10);
           const localRecorded = localStorage.getItem(`pushed_${staffId}`);
-          if (localRecorded) {
+          if (localRecorded === today) {
             setHasPushed(true);
+          } else {
+            setHasPushed(false);
           }
         });
+    } else {
+      setHasPushed(false);
     }
   }, [staffId]);
 
@@ -79,9 +87,7 @@ export default function App() {
       if (response.ok && data.success) {
         sessionStorage.setItem('rit_staff_id', normalizedId);
         setStaffId(normalizedId);
-        if (data.alreadyPushed) {
-          setHasPushed(true);
-        }
+        setHasPushed(Boolean(data.alreadyPushed));
       } else {
         setLoginError(data.message || 'Invalid Staff ID or Password');
       }
@@ -90,9 +96,8 @@ export default function App() {
       if (isValidStaff(normalizedId, password)) {
         sessionStorage.setItem('rit_staff_id', normalizedId);
         setStaffId(normalizedId);
-        if (localStorage.getItem(`pushed_${normalizedId}`)) {
-          setHasPushed(true);
-        }
+        const today = new Date().toISOString().slice(0, 10);
+        setHasPushed(localStorage.getItem(`pushed_${normalizedId}`) === today);
       } else {
         setLoginError('Invalid Staff ID or Password');
       }
@@ -132,7 +137,8 @@ export default function App() {
           if (response.ok && data.success) {
             setHasPushed(true);
             setIsPushing(false);
-            localStorage.setItem(`pushed_${staffId}`, 'true');
+            const today = new Date().toISOString().slice(0, 10);
+            localStorage.setItem(`pushed_${staffId}`, today);
             setErrorMessage(null);
           } else {
             setIsPushing(false);

@@ -84,39 +84,47 @@ def get_persisted_pushes() -> dict:
 
 
 def has_pushed_today(staff_id: str) -> bool:
-    """Check if the staff member has already recorded attendance today (once per day rule)."""
+    """Check if the specific staff member has already recorded attendance today (once per day rule)."""
     if not staff_id:
         return False
     sid = str(staff_id).strip().upper()
     today = get_today_ist()
 
-    # 1. In-memory dictionary for today
+    # 1. In-memory dictionary for today (strictly matching this sid)
     if pushed_today.get(sid) == today:
         return True
 
-    # 2. Staff phone session cookie (persists across tab and browser reopens on the staff phone)
+    # 2. Staff phone session cookie (strictly matching this specific sid!)
     if has_request_context():
-        if session.get("staff_id") == sid and session.get("last_pushed_date") == today:
+        if session.get(f"pushed_{sid}") == today:
             pushed_today[sid] = today
             return True
 
-    # 3. Serverless temp file cache
+    # 3. Serverless temp file cache (strictly matching this sid)
     persisted = get_persisted_pushes()
     if sid in persisted and persisted[sid].get("date") == today:
         pushed_today[sid] = today
         return True
 
+    # 4. Check in-memory attendance records for today (strictly matching this sid)
+    for r in attendance_records:
+        if r.get("staff_id") == sid and r.get("date") == today:
+            pushed_today[sid] = today
+            return True
+
     return False
 
 
 def record_push_today(staff_id: str, timestamp: str, block: str, lat: float = None, lon: float = None):
-    """Mark a staff member as having pushed today."""
+    """Mark a specific staff member as having pushed today."""
     sid = str(staff_id).strip().upper()
     today = get_today_ist()
 
     pushed_today[sid] = today
     if has_request_context():
-        session["last_pushed_date"] = today
+        # Clear any legacy generic key and store strictly per staff ID
+        session.pop("last_pushed_date", None)
+        session[f"pushed_{sid}"] = today
         session.permanent = True
 
     try:
@@ -231,7 +239,7 @@ def get_excel_file_path() -> str:
 
 
 def init_excel_file():
-    """Load existing rows from staff_presence.xlsx into memory and ensure file exists."""
+    """Load existing rows with filled Date from staff_presence.xlsx into memory and ensure clean 4-column structure."""
     global attendance_records
     attendance_records = []
 
@@ -243,38 +251,30 @@ def init_excel_file():
         try:
             wb = load_workbook(excel_path)
             ws = wb.active
-            header = [str(c).strip() if c is not None else "" for c in next(ws.iter_rows(min_row=1, max_row=1, values_only=True))]
             for row in ws.iter_rows(min_row=2, values_only=True):
                 if not row or not row[0]:
                     continue
                 sid = str(row[0]).strip().upper()
-                if header[:4] == EXCEL_HEADERS:
-                    date_val = str(row[1]) if len(row) > 1 and row[1] is not None else ""
-                    time_val = str(row[2]) if len(row) > 2 and row[2] is not None else ""
-                    block = str(row[3]) if len(row) > 3 and row[3] is not None else "Outside"
-                elif header[:3] == ["Staff ID", "Time", "Block"]:
-                    date_val = ""
-                    time_val = str(row[1]) if len(row) > 1 and row[1] is not None else ""
-                    block = str(row[2]) if len(row) > 2 and row[2] is not None else "Outside"
-                else:
-                    date_val = ""
-                    time_val = str(row[1]) if len(row) > 1 and row[1] is not None else ""
-                    block = str(row[4] if len(row) > 4 else (row[2] if len(row) > 2 else "Outside"))
-                attendance_records.append({"staff_id": sid, "date": date_val, "time": time_val, "block": block})
+                if len(row) >= 4 and row[1]:
+                    date_val = str(row[1]).strip()
+                    time_val = str(row[2]).strip() if len(row) > 2 and row[2] is not None else ""
+                    block = str(row[3]).strip() if len(row) > 3 and row[3] is not None else "Outside"
+                    # Strictly keep rows that have the date column filled
+                    if date_val and date_val.lower() != "none" and len(date_val) >= 8:
+                        attendance_records.append({"staff_id": sid, "date": date_val, "time": time_val, "block": block})
         except Exception as e:
             print(f"Error inspecting Excel file: {e}")
 
-    # Ensure writable Excel file is ready
+    # Ensure writable Excel file is ready with only records that have the Date filled
     writable_path = get_excel_file_path()
     try:
-        if not os.path.exists(writable_path):
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "Staff Presence"
-            ws.append(EXCEL_HEADERS)
-            for r in attendance_records:
-                ws.append([r["staff_id"], r.get("date", ""), r["time"], r["block"]])
-            wb.save(writable_path)
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Staff Presence"
+        ws.append(EXCEL_HEADERS)
+        for r in attendance_records:
+            ws.append([r["staff_id"], r["date"], r["time"], r["block"]])
+        wb.save(writable_path)
     except Exception as e:
         print(f"Note: Could not write Excel to disk ({e}), will use in-memory generation.")
 
@@ -316,6 +316,7 @@ def login():
         password = request.form.get("password", "").strip()
         if authenticate_staff(staff_id, password):
             session["staff_id"] = staff_id
+            session.pop("last_pushed_date", None)
             session.permanent = True
             return redirect(url_for("staff_screen"))
         return render_template("login.html", error="Invalid Staff ID or Password")
@@ -335,6 +336,7 @@ def api_login():
 
     if authenticate_staff(sid, str(password)):
         session["staff_id"] = sid
+        session.pop("last_pushed_date", None)
         session.permanent = True
         return jsonify({
             "success": True,
