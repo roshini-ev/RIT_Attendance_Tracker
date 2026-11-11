@@ -40,6 +40,7 @@ from flask import (
     url_for,
 )
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font
 
 from geofence import detect_location
 
@@ -242,8 +243,49 @@ def get_excel_file_path() -> str:
     return tmp_path
 
 
+EXCEL_COLUMN_WIDTHS = {
+    "A": 14,  # Staff ID
+    "B": 20,  # Phone Number
+    "C": 14,  # Date
+    "D": 12,  # Time
+    "E": 26,  # Block
+    "F": 12,  # Status
+}
+
+
+def style_excel_sheet(ws) -> None:
+    """Apply clean header styling, column widths, and plain-text formatting for phone numbers."""
+    for col_letter, width in EXCEL_COLUMN_WIDTHS.items():
+        ws.column_dimensions[col_letter].width = width
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    for row in ws.iter_rows(min_row=2):
+        for idx, cell in enumerate(row):
+            if idx in (0, 1, 2, 3):  # Staff ID, Phone Number, Date, Time
+                cell.number_format = "@"
+
+
+def build_excel_workbook(records) -> Workbook:
+    """Create a styled 6-column attendance workbook from records."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Staff Presence"
+    ws.append(EXCEL_HEADERS)
+    for r in records:
+        ws.append([
+            r.get("staff_id", ""),
+            r.get("phone_number", "Unavailable"),
+            r.get("date", ""),
+            r.get("time", ""),
+            r.get("block", ""),
+            r.get("status", "Present"),
+        ])
+    style_excel_sheet(ws)
+    return wb
+
+
 def init_excel_file():
-    """Load existing rows with filled Date from staff_presence.xlsx into memory and ensure clean 4-column structure."""
+    """Load existing rows with filled Date from staff_presence.xlsx into memory and ensure clean 6-column structure."""
     global attendance_records
     attendance_records = []
 
@@ -279,12 +321,7 @@ def init_excel_file():
     # Ensure writable Excel file is ready with only records that have the Date filled
     writable_path = get_excel_file_path()
     try:
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Staff Presence"
-        ws.append(EXCEL_HEADERS)
-        for r in attendance_records:
-            ws.append([r["staff_id"], r.get("phone_number", "Unavailable"), r["date"], r["time"], r["block"], r.get("status", "Present")])
+        wb = build_excel_workbook(attendance_records)
         wb.save(writable_path)
     except Exception as e:
         print(f"Note: Could not write Excel to disk ({e}), will use in-memory generation.")
@@ -304,14 +341,13 @@ def append_excel_record(staff_id: str, phone_number: str, date_str: str, timesta
     writable_path = get_excel_file_path()
     try:
         if not os.path.exists(writable_path):
-            wb = Workbook()
+            wb = build_excel_workbook([])
             ws = wb.active
-            ws.title = "Staff Presence"
-            ws.append(EXCEL_HEADERS)
         else:
             wb = load_workbook(writable_path)
             ws = wb.active
         ws.append([staff_id, phone_number, date_str, timestamp, block, status])
+        style_excel_sheet(ws)
         wb.save(writable_path)
     except Exception as e:
         print(f"[Excel] Disk write skipped ({e}), preserved in memory.")
@@ -476,20 +512,7 @@ def shared_excel():
     """Serve the live Excel sheet as a dynamically generated .xlsx download.
     Generates workbook in memory for 100% serverless and multi-platform reliability.
     """
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Staff Presence"
-    ws.append(EXCEL_HEADERS)
-
-    for r in attendance_records:
-        ws.append([
-            r.get("staff_id", ""),
-            r.get("phone_number", "Unavailable"),
-            r.get("date", ""),
-            r.get("time", ""),
-            r.get("block", ""),
-            r.get("status", "Present"),
-        ])
+    wb = build_excel_workbook(attendance_records)
 
     bio = io.BytesIO()
     wb.save(bio)

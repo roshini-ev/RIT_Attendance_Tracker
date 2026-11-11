@@ -53,10 +53,19 @@ if (!fs.existsSync(DATA_DIR)) {
 // In-memory / file-persisted pushed staff tracking
 interface PushRecord {
   staffId: string;
+  phoneNumber?: string;
+  date?: string;
   timestamp: string;
   latitude: number;
   longitude: number;
   location: string;
+  status?: string;
+}
+
+function getTodayDateString(): string {
+  const now = new Date();
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
 function loadPushes(): Record<string, PushRecord> {
@@ -113,16 +122,27 @@ function syncAllPushesToExcel(): void {
   try {
     const pushes = loadPushes();
     const rows = [
-      ['Staff ID', 'Time', 'Block'],
+      ['Staff ID', 'Phone Number', 'Date', 'Time', 'Block', 'Status'],
       ...Object.values(pushes).map((p) => [
         p.staffId,
+        p.phoneNumber || 'Unavailable',
+        p.date || getTodayDateString(),
         formatTimeOnly(p.timestamp),
         p.location,
+        p.status || 'Present',
       ]),
     ];
 
     const workbook = XLSX.utils.book_new();
     const worksheet = XLSX.utils.aoa_to_sheet(rows);
+    worksheet['!cols'] = [
+      { wch: 14 },
+      { wch: 20 },
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 26 },
+      { wch: 12 },
+    ];
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Staff Presence');
 
     // Also generate CSV content
@@ -178,13 +198,17 @@ function initExcelSync(): void {
 
       for (const row of rows) {
         const sid = String(row['Staff ID'] || '').trim().toUpperCase();
-        if (sid && !pushes[sid]) {
+        const dateVal = String(row['Date'] || '').trim();
+        if (sid && !pushes[sid] && dateVal) {
           pushes[sid] = {
             staffId: sid,
-            timestamp: String(row['Timestamp'] || getFormattedTimestamp()),
+            phoneNumber: String(row['Phone Number'] || 'Unavailable').trim() || 'Unavailable',
+            date: dateVal,
+            timestamp: String(row['Time'] || row['Timestamp'] || getFormattedTimestamp()),
             latitude: Number(row['Latitude']) || 0,
             longitude: Number(row['Longitude']) || 0,
             location: String(row['Block'] || row['Location'] || 'Outside'),
+            status: String(row['Status'] || 'Present').trim() || 'Present',
           };
           changed = true;
         }
@@ -248,22 +272,25 @@ app.get('/api/status', (req, res) => {
 
 // Record push
 app.post('/api/push', (req, res) => {
-  const { staffId, latitude, longitude } = req.body;
+  const { staffId, latitude, longitude, phoneNumber, status } = req.body;
 
   if (!staffId) {
     return res.status(400).json({ success: false, message: 'Staff ID is required.' });
   }
 
   const normalizedId = String(staffId).trim().toUpperCase();
+  const normalizedPhone = String(phoneNumber || 'Unavailable').trim() || 'Unavailable';
+  const attendanceStatus = String(status || 'Present').trim() || 'Present';
 
   // Validate staff member exists or matches pattern
   if (!DUMMY_STAFF[normalizedId] && !/^STAFF\d+$/i.test(normalizedId)) {
     return res.status(403).json({ success: false, message: 'Unrecognized Staff ID.' });
   }
 
-  // Duplicate check - server-side prevention
+  // Duplicate check - once per day per staff ID
   const pushes = loadPushes();
-  if (pushes[normalizedId]) {
+  const today = getTodayDateString();
+  if (pushes[normalizedId] && pushes[normalizedId].date === today) {
     return res.status(400).json({
       success: false,
       message: 'Push already recorded for this staff member.',
@@ -285,15 +312,18 @@ app.post('/api/push', (req, res) => {
   // Detect location using geofence logic
   const detectedPlace = detectLocation(lat, lon);
 
-  // Generate server timestamp in YYYY-MM-DD HH:MM:SS format
+  // Generate server timestamp in HH:MM:SS format
   const timestamp = getFormattedTimestamp();
 
   const record: PushRecord = {
     staffId: normalizedId,
+    phoneNumber: normalizedPhone,
+    date: today,
     timestamp,
     latitude: lat,
     longitude: lon,
     location: detectedPlace,
+    status: attendanceStatus,
   };
 
   // Persist record

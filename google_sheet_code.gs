@@ -6,7 +6,7 @@
  * 1. https://sheets.new -> new spreadsheet.
  * 2. In the spreadsheet: Extensions -> Apps Script.
  *    Delete sample code, paste ALL of this file, press Ctrl+S.
- * 3. Deploy -> New deployment -> Web app:
+ * 3. Deploy -> New deployment (or Manage deployments -> Edit -> New version) -> Web app:
  *      Execute as: Me   |   Who has access: Anyone
  *    Deploy -> authorize -> copy the /exec URL.
  * 4. Save that URL into google_sheet_webhook.txt (project folder) or
@@ -19,6 +19,44 @@
 function doGet() {
   return ContentService.createTextOutput('RIT punch webhook OK')
     .setMimeType(ContentService.MimeType.TEXT);
+}
+
+function ensureAttendanceHeaders_(sheet) {
+  if (!sheet.getRange('A1').getValue()) {
+    sheet.appendRow(['Staff ID', 'Phone Number', 'Date', 'Time', 'Block', 'Status']);
+    return;
+  }
+
+  var lastCol = Math.max(sheet.getLastColumn(), 1);
+  var rawHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var normHeaders = rawHeaders.map(function (h) {
+    return String(h || '').trim().toLowerCase();
+  });
+
+  // Upgrade legacy 3-column sheet (Staff ID, Time, Block)
+  if (normHeaders.indexOf('phone number') === -1 && normHeaders.indexOf('date') === -1 && normHeaders[1] === 'time') {
+    sheet.insertColumnBefore(2);
+    sheet.getRange('B1').setValue('Date');
+    sheet.insertColumnBefore(2);
+    sheet.getRange('B1').setValue('Phone Number');
+  } else if (normHeaders.indexOf('phone number') === -1) {
+    // Insert Phone Number before Date (column B) for 4-column or 5-column sheets
+    sheet.insertColumnBefore(2);
+    sheet.getRange('B1').setValue('Phone Number');
+  }
+
+  // Re-read row 1 to ensure Status exists at the end
+  lastCol = Math.max(sheet.getLastColumn(), 1);
+  rawHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  normHeaders = rawHeaders.map(function (h) {
+    return String(h || '').trim().toLowerCase();
+  });
+  if (normHeaders.indexOf('status') === -1) {
+    sheet.getRange(1, lastCol + 1).setValue('Status');
+  }
+
+  // Format header row bold
+  sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 6)).setFontWeight('bold');
 }
 
 function doPost(e) {
@@ -38,28 +76,40 @@ function doPost(e) {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheets()[0];
 
-    // If the sheet is empty, add the 6-column header
-    if (!sheet.getRange('A1').getValue()) {
-      sheet.appendRow(['Staff ID', 'Phone Number', 'Date', 'Time', 'Block', 'Status']);
-    } else if (sheet.getRange('B1').getValue() === 'Date') {
-      // Upgrade existing 4-column sheet by inserting Phone Number before Date
-      sheet.insertColumnBefore(2);
-      sheet.getRange('B1').setValue('Phone Number');
-      if (!sheet.getRange('F1').getValue()) {
-        sheet.getRange('F1').setValue('Status');
-      }
-    } else if (sheet.getRange('B1').getValue() === 'Time') {
-      // Upgrade existing 3-column sheet
-      sheet.insertColumnBefore(2);
-      sheet.getRange('B1').setValue('Date');
-      sheet.insertColumnBefore(2);
-      sheet.getRange('B1').setValue('Phone Number');
-      if (!sheet.getRange('F1').getValue()) {
-        sheet.getRange('F1').setValue('Status');
+    ensureAttendanceHeaders_(sheet);
+
+    var lastCol = Math.max(sheet.getLastColumn(), 6);
+    var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) {
+      return String(h || '').trim().toLowerCase();
+    });
+
+    var rowValues = new Array(headers.length);
+    for (var i = 0; i < headers.length; i++) {
+      var h = headers[i];
+      if (h === 'staff id') {
+        rowValues[i] = staffId;
+      } else if (h === 'phone number') {
+        rowValues[i] = phoneNumber;
+      } else if (h === 'date') {
+        rowValues[i] = date;
+      } else if (h === 'time' || h === 'timestamp') {
+        rowValues[i] = time;
+      } else if (h === 'block' || h === 'detected block' || h === 'location') {
+        rowValues[i] = block;
+      } else if (h === 'status') {
+        rowValues[i] = status;
+      } else {
+        rowValues[i] = '';
       }
     }
 
-    sheet.appendRow([staffId, phoneNumber, date, time, block, status]);
+    sheet.appendRow(rowValues);
+    var newRowIndex = sheet.getLastRow();
+    var phoneColIndex = headers.indexOf('phone number') + 1;
+    if (phoneColIndex > 0) {
+      // Preserve leading '+' (e.g. +919876543210) as plain text instead of formula/scientific notation
+      sheet.getRange(newRowIndex, phoneColIndex).setNumberFormat('@').setValue(phoneNumber);
+    }
 
     return ContentService.createTextOutput(
       JSON.stringify({ success: true })
