@@ -57,12 +57,12 @@ import java.util.TimeZone;
 public class MainActivity extends AppCompatActivity {
 
     public static final String BASE_URL = "https://rit-attendance-tracker.vercel.app";
-    public static final String TRUSTED_HOST = "rit-attendance-tracker.vercel.app";
+    public static final String TRUSTED_HOST = PhoneSessionPolicy.TRUSTED_HOST;
     private static final String PREFS_NAME = "rit_phone_session_prefs";
     private static final String KEY_STAFF_ID = "active_staff_id";
     private static final String KEY_PHONE_NUMBER = "selected_phone_number";
     private static final String KEY_SESSION_DATE = "selection_date";
-    private static final String VALUE_UNAVAILABLE = "Unavailable";
+    private static final String VALUE_UNAVAILABLE = PhoneSessionPolicy.VALUE_UNAVAILABLE;
 
     private WebView webView;
     private SwipeRefreshLayout swipeRefreshLayout;
@@ -333,13 +333,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public boolean isTrustedOrigin() {
-        String url = currentVerifiedOriginUrl;
-        if (TextUtils.isEmpty(url)) {
-            return false;
-        }
-        Uri uri = Uri.parse(url);
-        return "https".equalsIgnoreCase(uri.getScheme())
-                && TRUSTED_HOST.equalsIgnoreCase(uri.getHost());
+        return PhoneSessionPolicy.isTrustedOriginUrl(currentVerifiedOriginUrl);
     }
 
     public String getConfirmedPhoneNumber() {
@@ -350,7 +344,8 @@ public class MainActivity extends AppCompatActivity {
                 String savedSid = prefs.getString(KEY_STAFF_ID, "");
                 String savedPhone = prefs.getString(KEY_PHONE_NUMBER, "");
                 String savedDate = prefs.getString(KEY_SESSION_DATE, "");
-                if (activeStaffId.equals(savedSid) && getTodayIst().equals(savedDate) && !TextUtils.isEmpty(savedPhone)) {
+                if (PhoneSessionPolicy.isSavedSessionValid(
+                        activeStaffId, savedSid, savedPhone, savedDate, getTodayIst())) {
                     confirmedPhoneNumber = savedPhone;
                 }
             }
@@ -368,7 +363,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public void handleStaffPageLoaded(@NonNull String staffId, boolean alreadyPushed) {
-        String cleanSid = staffId.trim().toUpperCase(Locale.US);
+        String cleanSid = PhoneSessionPolicy.normalizeStaffId(staffId);
         if (cleanSid.isEmpty()) {
             return;
         }
@@ -381,7 +376,7 @@ public class MainActivity extends AppCompatActivity {
         String today = getTodayIst();
 
         // Check if saved valid selection exists for THIS staff member and TODAY's session
-        if (cleanSid.equals(savedSid) && today.equals(savedDate) && !TextUtils.isEmpty(savedPhone)) {
+        if (PhoneSessionPolicy.isSavedSessionValid(cleanSid, savedSid, savedPhone, savedDate, today)) {
             activeStaffId = cleanSid;
             confirmedPhoneNumber = savedPhone;
             notifyWebPhoneSelected(savedPhone);
