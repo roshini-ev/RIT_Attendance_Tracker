@@ -21,14 +21,29 @@
         <div class="hdr-tagline">Rajalakshmi Institute of Technology</div>
       </div>
     </div>
-    <a class="hdr-logout" href="/logout">Logout</a>
+    <a class="hdr-logout" href="/logout" onclick="if(window.AndroidBridge){try{window.AndroidBridge.onStaffLoggedOut();}catch(e){}}">Logout</a>
   </header>
 
   <main class="staff-main">
     <div class="punch-card">
       <p class="punch-kicker">Logged in as</p>
       <div class="staff-id-display" id="staffIdDisplay">{{ staff_id }}</div>
-      <p class="punch-hint">Tap once to record your presence. Location is used only to detect your block.</p>
+
+      <!-- Native Phone Selection Display for Android App -->
+      <div id="phoneSection" style="display:none; margin: 10px 0 16px;">
+        <div id="phoneBadge" style="display:inline-flex; align-items:center; gap:6px; padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; background: #e0f2fe; color: #0369a1;">
+          <span>📱</span>
+          <span>Phone:</span>
+          <span id="phoneNumberDisplay" style="font-weight: 700;">Pending</span>
+        </div>
+        <div style="margin-top: 8px;">
+          <button id="btnSelectPhone" type="button" style="display:none; padding: 8px 16px; background: #f59e0b; color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer;">
+            Select Phone Number
+          </button>
+        </div>
+      </div>
+
+      <p class="punch-hint" id="punchHint">Tap once to record your presence. Location is used only to detect your block.</p>
 
       {% if has_pushed %}
         <button id="pushButton" class="push-btn pushed" disabled>PUSHED</button>

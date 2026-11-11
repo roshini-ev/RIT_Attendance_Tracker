@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">RIT Attendance Tracker</string>
+    <string name="institute_name">Rajalakshmi Institute of Technology</string>
+    <string name="loading_message">Connecting to RIT Attendance Portal…</string>
+    <string name="network_error_title">Connection Unavailable</string>
+    <string name="network_error_desc">Please check your internet connection and tap Retry to reload the RIT Staff Attendance portal.</string>
+    <string name="retry">Retry</string>
+    <string name="phone_unavailable_title">Select Phone Number</string>
+    <string name="phone_unavailable_message">No phone number could be retrieved from this device. Choose an option below to continue:</string>
+    <string name="phone_unavailable_option">Unavailable</string>
+    <string name="cancel">Cancel</string>
+</resources>

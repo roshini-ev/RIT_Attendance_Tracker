@@ -25,9 +25,11 @@ function doPost(e) {
   try {
     var payload = JSON.parse(e.postData.contents);
     var staffId = String(payload.staff_id || '').trim();
+    var phoneNumber = String(payload.phone_number || 'Unavailable').trim();
     var date = String(payload.date || Utilities.formatDate(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd')).trim();
     var time = String(payload.time || '').trim();
     var block = String(payload.block || 'Outside').trim();
+    var status = String(payload.status || 'Present').trim();
 
     if (!staffId) {
       throw new Error('Missing staff_id in request body');
@@ -36,16 +38,28 @@ function doPost(e) {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getSheets()[0];
 
-    // If the sheet is empty, add the 4-column header
+    // If the sheet is empty, add the 6-column header
     if (!sheet.getRange('A1').getValue()) {
-      sheet.appendRow(['Staff ID', 'Date', 'Time', 'Block']);
+      sheet.appendRow(['Staff ID', 'Phone Number', 'Date', 'Time', 'Block', 'Status']);
+    } else if (sheet.getRange('B1').getValue() === 'Date') {
+      // Upgrade existing 4-column sheet by inserting Phone Number before Date
+      sheet.insertColumnBefore(2);
+      sheet.getRange('B1').setValue('Phone Number');
+      if (!sheet.getRange('F1').getValue()) {
+        sheet.getRange('F1').setValue('Status');
+      }
     } else if (sheet.getRange('B1').getValue() === 'Time') {
-      // Upgrade existing 3-column sheet by inserting Date column before column B
+      // Upgrade existing 3-column sheet
       sheet.insertColumnBefore(2);
       sheet.getRange('B1').setValue('Date');
+      sheet.insertColumnBefore(2);
+      sheet.getRange('B1').setValue('Phone Number');
+      if (!sheet.getRange('F1').getValue()) {
+        sheet.getRange('F1').setValue('Status');
+      }
     }
 
-    sheet.appendRow([staffId, date, time, block]);
+    sheet.appendRow([staffId, phoneNumber, date, time, block, status]);
 
     return ContentService.createTextOutput(
       JSON.stringify({ success: true })

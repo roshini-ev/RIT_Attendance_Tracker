@@ -1,4 +1,19 @@
-import { useState, useEffect, type FormEvent } from 'react';
+import { useState, useEffect, useRef, type FormEvent } from 'react';
+
+declare global {
+  interface Window {
+    AndroidBridge?: {
+      onLoginPageLoaded: () => void;
+      onStaffPageLoaded: (staffId: string, alreadyPushed: boolean) => void;
+      onStaffLoggedOut: () => void;
+      requestPhoneNumberHint: () => void;
+      getSelectedPhoneNumber: () => string;
+    };
+    onNativePhoneSelected?: (phone: string) => void;
+    onNativePhoneCleared?: () => void;
+    onNativePhoneCancelled?: () => void;
+  }
+}
 
 // Demo credentials
 const DUMMY_STAFF: Record<string, string> = {
@@ -20,6 +35,8 @@ function isValidStaff(id: string, pass: string): boolean {
 }
 
 export default function App() {
+  const isAndroid = typeof window !== 'undefined' && Boolean(window.AndroidBridge);
+
   const [staffId, setStaffId] = useState<string | null>(() => {
     return sessionStorage.getItem('rit_staff_id');
   });
@@ -30,6 +47,43 @@ export default function App() {
   const [hasPushed, setHasPushed] = useState<boolean>(false);
   const [isPushing, setIsPushing] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [selectedPhone, setSelectedPhone] = useState<string | null>(() => {
+    if (typeof window !== 'undefined' && window.AndroidBridge) {
+      try {
+        const val = window.AndroidBridge.getSelectedPhoneNumber();
+        return val && val.trim() ? val.trim() : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
+
+  const justLoggedInRef = useRef<boolean>(false);
+
+  // Register native Android callbacks
+  useEffect(() => {
+    window.onNativePhoneSelected = (phone: string) => {
+      const clean = phone ? phone.trim() : '';
+      setSelectedPhone(clean.length > 0 ? clean : null);
+      if (clean.length > 0) {
+        setErrorMessage(null);
+      }
+    };
+    window.onNativePhoneCleared = () => {
+      setSelectedPhone(null);
+    };
+    window.onNativePhoneCancelled = () => {
+      setSelectedPhone(null);
+      setErrorMessage('Phone number selection is required before pushing attendance.');
+    };
+
+    return () => {
+      delete window.onNativePhoneSelected;
+      delete window.onNativePhoneCleared;
+      delete window.onNativePhoneCancelled;
+    };
+  }, []);
 
   const handleLogout = () => {
     sessionStorage.removeItem('rit_staff_id');
@@ -37,40 +91,78 @@ export default function App() {
     setHasPushed(false);
     setIsPushing(false);
     setErrorMessage(null);
+    setSelectedPhone(null);
+    justLoggedInRef.current = false;
+
+    fetch('/logout', { credentials: 'same-origin' }).catch(() => {});
+    if (isAndroid && window.AndroidBridge) {
+      try {
+        window.AndroidBridge.onStaffLoggedOut();
+      } catch {
+        // ignore
+      }
+    }
   };
 
-  // Check on load whether this staff member has already pushed
+  // Notify Android login state & verify status when staffId changes or loads
   useEffect(() => {
-    if (staffId) {
+    if (!staffId) {
       setHasPushed(false);
-      // Check server status
-      fetch(`/api/status?staffId=${encodeURIComponent(staffId)}`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (data && data.pushed) {
-            setHasPushed(true);
-          } else {
-            setHasPushed(false);
-          }
-        })
-        .catch(() => {
-          // If server call fails, check local fallback
-          const today = new Date().toISOString().slice(0, 10);
-          const localRecorded = localStorage.getItem(`pushed_${staffId}`);
-          if (localRecorded === today) {
-            setHasPushed(true);
-          } else {
-            setHasPushed(false);
-          }
-        });
-    } else {
-      setHasPushed(false);
+      setSelectedPhone(null);
+      if (isAndroid && window.AndroidBridge) {
+        try {
+          window.AndroidBridge.onLoginPageLoaded();
+        } catch {
+          // ignore
+        }
+      }
+      return;
     }
-  }, [staffId]);
+
+    if (justLoggedInRef.current) {
+      justLoggedInRef.current = false;
+      return;
+    }
+
+    setHasPushed(false);
+    fetch(`/api/status?staffId=${encodeURIComponent(staffId)}`, {
+      credentials: 'same-origin',
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        const pushed = Boolean(data && data.pushed);
+        setHasPushed(pushed);
+        if (isAndroid && window.AndroidBridge) {
+          try {
+            const existing = window.AndroidBridge.getSelectedPhoneNumber();
+            setSelectedPhone(existing && existing.trim() ? existing.trim() : null);
+            window.AndroidBridge.onStaffPageLoaded(staffId, pushed);
+          } catch {
+            // ignore
+          }
+        }
+      })
+      .catch(() => {
+        const today = new Date().toISOString().slice(0, 10);
+        const localRecorded = localStorage.getItem(`pushed_${staffId}`);
+        const pushed = localRecorded === today;
+        setHasPushed(pushed);
+        if (isAndroid && window.AndroidBridge) {
+          try {
+            const existing = window.AndroidBridge.getSelectedPhoneNumber();
+            setSelectedPhone(existing && existing.trim() ? existing.trim() : null);
+            window.AndroidBridge.onStaffPageLoaded(staffId, pushed);
+          } catch {
+            // ignore
+          }
+        }
+      });
+  }, [staffId, isAndroid]);
 
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
     setLoginError(null);
+    setErrorMessage(null);
 
     const normalizedId = inputStaffId.trim().toUpperCase();
     const password = inputPassword.trim();
@@ -79,25 +171,47 @@ export default function App() {
       const response = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ staffId: normalizedId, password }),
       });
 
       const data = await response.json();
 
       if (response.ok && data.success) {
+        const alreadyPushed = Boolean(data.alreadyPushed);
         sessionStorage.setItem('rit_staff_id', normalizedId);
+        justLoggedInRef.current = true;
+        setHasPushed(alreadyPushed);
         setStaffId(normalizedId);
-        setHasPushed(Boolean(data.alreadyPushed));
+
+        if (isAndroid && window.AndroidBridge) {
+          try {
+            const existing = window.AndroidBridge.getSelectedPhoneNumber();
+            setSelectedPhone(existing && existing.trim() ? existing.trim() : null);
+            window.AndroidBridge.onStaffPageLoaded(normalizedId, alreadyPushed);
+          } catch {
+            // ignore
+          }
+        }
       } else {
         setLoginError(data.message || 'Invalid Staff ID or Password');
       }
     } catch {
-      // Fallback check
       if (isValidStaff(normalizedId, password)) {
-        sessionStorage.setItem('rit_staff_id', normalizedId);
-        setStaffId(normalizedId);
         const today = new Date().toISOString().slice(0, 10);
-        setHasPushed(localStorage.getItem(`pushed_${normalizedId}`) === today);
+        const pushed = localStorage.getItem(`pushed_${normalizedId}`) === today;
+        sessionStorage.setItem('rit_staff_id', normalizedId);
+        justLoggedInRef.current = true;
+        setHasPushed(pushed);
+        setStaffId(normalizedId);
+
+        if (isAndroid && window.AndroidBridge) {
+          try {
+            window.AndroidBridge.onStaffPageLoaded(normalizedId, pushed);
+          } catch {
+            // ignore
+          }
+        }
       } else {
         setLoginError('Invalid Staff ID or Password');
       }
@@ -106,6 +220,23 @@ export default function App() {
 
   const handlePush = () => {
     if (hasPushed || isPushing || !staffId) return;
+
+    let phoneToSubmit = 'Unavailable';
+    if (isAndroid) {
+      let nativePhone = '';
+      try {
+        nativePhone = window.AndroidBridge?.getSelectedPhoneNumber() || '';
+      } catch {
+        nativePhone = '';
+      }
+      if (!nativePhone.trim()) {
+        setSelectedPhone(null);
+        setErrorMessage('Please select your phone number (or Unavailable) before pushing.');
+        return;
+      }
+      phoneToSubmit = nativePhone.trim();
+      setSelectedPhone(phoneToSubmit);
+    }
 
     setErrorMessage(null);
 
@@ -125,10 +256,14 @@ export default function App() {
           const response = await fetch('/api/push', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
             body: JSON.stringify({
               staffId,
               latitude,
               longitude,
+              phoneNumber: phoneToSubmit,
+              androidApp: isAndroid,
+              status: 'Present',
             }),
           });
 
@@ -162,10 +297,21 @@ export default function App() {
       },
       {
         enableHighAccuracy: true,
-        timeout: 10000,
+        timeout: 15000,
         maximumAge: 0,
       }
     );
+  };
+
+  const handleRequestPhoneHint = () => {
+    setErrorMessage(null);
+    if (isAndroid && window.AndroidBridge) {
+      try {
+        window.AndroidBridge.requestPhoneNumberHint();
+      } catch {
+        setErrorMessage('Unable to launch phone number selector.');
+      }
+    }
   };
 
   // ----------------------------------------------------
@@ -173,11 +319,11 @@ export default function App() {
   // ----------------------------------------------------
   if (!staffId) {
     return (
-      <div 
+      <div
         id="loginPage"
         className="min-h-screen w-full flex items-center justify-center bg-slate-100 p-4"
       >
-        <div 
+        <div
           id="loginCard"
           className="w-full max-w-sm bg-white rounded-xl border border-slate-200 shadow-sm p-8"
         >
@@ -187,7 +333,7 @@ export default function App() {
           </div>
 
           {loginError && (
-            <div 
+            <div
               id="loginErrorBanner"
               className="mb-4 p-2.5 bg-red-50 border border-red-200 text-red-700 text-xs font-medium rounded-lg text-center"
             >
@@ -197,8 +343,8 @@ export default function App() {
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label 
-                htmlFor="staffIdInput" 
+              <label
+                htmlFor="staffIdInput"
                 className="block text-xs font-semibold text-slate-700 mb-1"
               >
                 Staff ID
@@ -215,8 +361,8 @@ export default function App() {
             </div>
 
             <div>
-              <label 
-                htmlFor="passwordInput" 
+              <label
+                htmlFor="passwordInput"
                 className="block text-xs font-semibold text-slate-700 mb-1"
               >
                 Password
@@ -241,7 +387,7 @@ export default function App() {
             </button>
           </form>
 
-          <div 
+          <div
             id="demoCredentialsInfo"
             className="mt-6 p-3 bg-slate-50 border border-dashed border-slate-300 rounded-lg text-center"
           >
@@ -261,14 +407,12 @@ export default function App() {
   }
 
   // ----------------------------------------------------
-  // VIEW 2: Staff Screen (Strictly Minimal Single-Screen)
-  // Contains ONLY:
-  // Staff ID
-  // [ PUSH ] or [ PUSHED ]
-  // Discreet Switch/Logout button for testing multiple IDs
+  // VIEW 2: Staff Screen
   // ----------------------------------------------------
+  const pushDisabled = hasPushed || isPushing || (isAndroid && !selectedPhone);
+
   return (
-    <div 
+    <div
       id="staffScreenContainer"
       className="relative h-screen w-screen flex flex-col items-center justify-center bg-white p-6 select-none overflow-hidden"
     >
@@ -281,23 +425,48 @@ export default function App() {
         </button>
       </div>
 
-      <div 
+      <div
         id="staffCenterWrapper"
         className="flex flex-col items-center justify-center text-center"
       >
-        <div 
+        <div
           id="staffIdDisplay"
-          className="text-3xl font-bold tracking-wider text-slate-800 mb-10"
+          className="text-3xl font-bold tracking-wider text-slate-800 mb-4"
         >
           {staffId}
         </div>
 
+        {isAndroid && (
+          <div className="mb-6 flex flex-col items-center gap-2">
+            <div
+              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold ${
+                selectedPhone === 'Unavailable'
+                  ? 'bg-amber-100 text-amber-800'
+                  : selectedPhone
+                  ? 'bg-emerald-100 text-emerald-800'
+                  : 'bg-red-100 text-red-800'
+              }`}
+            >
+              📱 Phone: {selectedPhone || 'Selection Required'}
+            </div>
+            {!selectedPhone && !hasPushed && (
+              <button
+                type="button"
+                onClick={handleRequestPhoneHint}
+                className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg shadow-sm cursor-pointer"
+              >
+                Select Phone Number
+              </button>
+            )}
+          </div>
+        )}
+
         <button
           id="pushButton"
-          disabled={hasPushed || isPushing}
+          disabled={pushDisabled}
           onClick={handlePush}
           className={`w-56 h-16 text-xl font-bold tracking-widest rounded-xl transition-all duration-200 flex items-center justify-center ${
-            hasPushed
+            hasPushed || (isAndroid && !selectedPhone)
               ? 'bg-slate-400 text-slate-100 cursor-not-allowed shadow-none'
               : isPushing
               ? 'bg-sky-500 text-white cursor-wait opacity-90'
@@ -307,10 +476,10 @@ export default function App() {
           {hasPushed ? 'PUSHED' : isPushing ? '...' : 'PUSH'}
         </button>
 
-        {/* Minimal error notification (only shown if GPS permission failed or error occurred) */}
-        <div 
+        {/* Minimal error notification */}
+        <div
           id="errorMessage"
-          className="mt-5 text-sm font-medium text-red-500 min-h-5"
+          className="mt-5 text-sm font-medium text-red-500 min-h-5 max-w-xs"
         >
           {errorMessage || ''}
         </div>

@@ -49,5 +49,15 @@
     </div>
   </div>
 </div>
+
+<script>
+  if (typeof window.AndroidBridge !== 'undefined') {
+    try {
+      window.AndroidBridge.onLoginPageLoaded();
+    } catch (e) {
+      console.error('AndroidBridge login page error:', e);
+    }
+  }
+</script>
 </body>
 </html>
