@@ -263,7 +263,6 @@ export default function App() {
               longitude,
               phoneNumber: phoneToSubmit,
               androidApp: isAndroid,
-              status: 'Present',
             }),
           });
 

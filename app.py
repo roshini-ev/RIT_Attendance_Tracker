@@ -51,7 +51,7 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 DUMMY_STAFF = {f"STAFF{i:03d}": "staff123" for i in range(1, 51)}
 DUMMY_STAFF["HOD01"] = "staff123"
 
-EXCEL_HEADERS = ["Staff ID", "Phone Number", "Date", "Time", "Block", "Status"]
+EXCEL_HEADERS = ["Staff ID", "Phone Number", "Date", "Time", "Block"]
 
 # Indian Standard Time (IST, UTC+05:30) for precise daily cutoff at 00:00 midnight
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -116,7 +116,7 @@ def has_pushed_today(staff_id: str) -> bool:
     return False
 
 
-def record_push_today(staff_id: str, timestamp: str, block: str, lat: float = None, lon: float = None, phone_number: str = "Unavailable", status: str = "Present"):
+def record_push_today(staff_id: str, timestamp: str, block: str, lat: float = None, lon: float = None, phone_number: str = "Unavailable"):
     """Mark a specific staff member as having pushed today."""
     sid = str(staff_id).strip().upper()
     today = get_today_ist()
@@ -139,7 +139,6 @@ def record_push_today(staff_id: str, timestamp: str, block: str, lat: float = No
             "date": today,
             "timestamp": timestamp,
             "location": block,
-            "status": status,
         }
         if lat is not None and lon is not None:
             entry["latitude"] = lat
@@ -172,7 +171,7 @@ def get_google_sheet_webhook() -> str:
     return DEFAULT_GOOGLE_SHEET_WEBHOOK
 
 
-def sync_to_google_sheet(staff_id: str, phone_number: str, date_str: str, timestamp: str, block: str, status: str = "Present") -> bool:
+def sync_to_google_sheet(staff_id: str, phone_number: str, date_str: str, timestamp: str, block: str) -> bool:
     """Append one punch row to the linked Google Sheet via its Apps Script webhook.
 
     Uses standard urllib.request which automatically follows Google Apps Script
@@ -189,7 +188,6 @@ def sync_to_google_sheet(staff_id: str, phone_number: str, date_str: str, timest
         "date": date_str,
         "time": timestamp,
         "block": block,
-        "status": status,
     }).encode("utf-8")
 
     req = urllib.request.Request(
@@ -249,7 +247,6 @@ EXCEL_COLUMN_WIDTHS = {
     "C": 14,  # Date
     "D": 12,  # Time
     "E": 26,  # Block
-    "F": 12,  # Status
 }
 
 
@@ -266,7 +263,7 @@ def style_excel_sheet(ws) -> None:
 
 
 def build_excel_workbook(records) -> Workbook:
-    """Create a styled 6-column attendance workbook from records."""
+    """Create a styled 5-column attendance workbook from records."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Staff Presence"
@@ -278,14 +275,13 @@ def build_excel_workbook(records) -> Workbook:
             r.get("date", ""),
             r.get("time", ""),
             r.get("block", ""),
-            r.get("status", "Present"),
         ])
     style_excel_sheet(ws)
     return wb
 
 
 def init_excel_file():
-    """Load existing rows with filled Date from staff_presence.xlsx into memory and ensure clean 6-column structure."""
+    """Load existing rows with filled Date from staff_presence.xlsx into memory and ensure clean 5-column structure."""
     global attendance_records
     attendance_records = []
 
@@ -301,20 +297,20 @@ def init_excel_file():
                 if not row or not row[0]:
                     continue
                 sid = str(row[0]).strip().upper()
-                if len(row) >= 6:
-                    phone_val = str(row[1]).strip() if row[1] else "Unavailable"
+                col1 = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ""
+                # Handle legacy 4/5-column layout without Phone Number (Staff ID, Date, Time, Block[, Status])
+                if len(row) >= 4 and re.match(r"^\d{4}-\d{2}-\d{2}$", col1):
+                    date_val = col1
+                    time_val = str(row[2]).strip() if len(row) > 2 and row[2] is not None else ""
+                    block = str(row[3]).strip() if len(row) > 3 and row[3] is not None else "Outside"
+                    attendance_records.append({"staff_id": sid, "phone_number": "Unavailable", "date": date_val, "time": time_val, "block": block})
+                elif len(row) >= 5:
+                    phone_val = col1 if col1 else "Unavailable"
                     date_val = str(row[2]).strip() if row[2] else ""
                     time_val = str(row[3]).strip() if len(row) > 3 and row[3] is not None else ""
                     block = str(row[4]).strip() if len(row) > 4 and row[4] is not None else "Outside"
-                    status_val = str(row[5]).strip() if len(row) > 5 and row[5] is not None else "Present"
                     if date_val and date_val.lower() != "none" and len(date_val) >= 8:
-                        attendance_records.append({"staff_id": sid, "phone_number": phone_val, "date": date_val, "time": time_val, "block": block, "status": status_val})
-                elif len(row) >= 4 and row[1]:
-                    date_val = str(row[1]).strip()
-                    time_val = str(row[2]).strip() if len(row) > 2 and row[2] is not None else ""
-                    block = str(row[3]).strip() if len(row) > 3 and row[3] is not None else "Outside"
-                    if date_val and date_val.lower() != "none" and len(date_val) >= 8:
-                        attendance_records.append({"staff_id": sid, "phone_number": "Unavailable", "date": date_val, "time": time_val, "block": block, "status": "Present"})
+                        attendance_records.append({"staff_id": sid, "phone_number": phone_val, "date": date_val, "time": time_val, "block": block})
         except Exception as e:
             print(f"Error inspecting Excel file: {e}")
 
@@ -327,7 +323,7 @@ def init_excel_file():
         print(f"Note: Could not write Excel to disk ({e}), will use in-memory generation.")
 
 
-def append_excel_record(staff_id: str, phone_number: str, date_str: str, timestamp: str, block: str, status: str = "Present"):
+def append_excel_record(staff_id: str, phone_number: str, date_str: str, timestamp: str, block: str):
     """Append a record to in-memory store and to disk Excel file if possible."""
     attendance_records.append({
         "staff_id": staff_id,
@@ -335,7 +331,6 @@ def append_excel_record(staff_id: str, phone_number: str, date_str: str, timesta
         "date": date_str,
         "time": timestamp,
         "block": block,
-        "status": status,
     })
 
     writable_path = get_excel_file_path()
@@ -346,7 +341,7 @@ def append_excel_record(staff_id: str, phone_number: str, date_str: str, timesta
         else:
             wb = load_workbook(writable_path)
             ws = wb.active
-        ws.append([staff_id, phone_number, date_str, timestamp, block, status])
+        ws.append([staff_id, phone_number, date_str, timestamp, block])
         style_excel_sheet(ws)
         wb.save(writable_path)
     except Exception as e:
@@ -468,18 +463,17 @@ def api_push():
     now_ist = get_ist_now()
     date_str = now_ist.strftime("%Y-%m-%d")
     timestamp = now_ist.strftime("%H:%M:%S")
-    attendance_status = str(data.get("status") or "Present").strip()
 
     print(f"[PUSH] Staff: {staff_id} | Phone: {phone_number} | Date: {date_str} | Time: {timestamp} | GPS: ({lat:.7f}, {lon:.7f}) | Block: {block}")
 
     # 1. Mark staff as pushed today and append to stores
-    record_push_today(staff_id, timestamp, block, lat, lon, phone_number=phone_number, status=attendance_status)
-    append_excel_record(staff_id, phone_number, date_str, timestamp, block, status=attendance_status)
+    record_push_today(staff_id, timestamp, block, lat, lon, phone_number=phone_number)
+    append_excel_record(staff_id, phone_number, date_str, timestamp, block)
 
     # 2. Sync immediately to Google Sheets (live cloud sync for phone and PC)
     sheet_synced = False
     try:
-        sheet_synced = sync_to_google_sheet(staff_id, phone_number, date_str, timestamp, block, status=attendance_status)
+        sheet_synced = sync_to_google_sheet(staff_id, phone_number, date_str, timestamp, block)
     except Exception as e:
         print(f"[Google Sheet] Sync exception for {staff_id}: {e}")
 
@@ -491,7 +485,6 @@ def api_push():
         "date": date_str,
         "time": timestamp,
         "block": block,
-        "attendance_status": attendance_status,
         "google_sheet_synced": sheet_synced,
     })
 
@@ -578,7 +571,6 @@ def attendance_dashboard():
             <th>Date</th>
             <th>Time</th>
             <th>Detected Block</th>
-            <th>Status</th>
           </tr>
         </thead>
         <tbody>
@@ -589,11 +581,10 @@ def attendance_dashboard():
             <td>{{ r.date or '' }}</td>
             <td>{{ r.time }}</td>
             <td>{{ r.block }}</td>
-            <td><span style="color: #16a34a; font-weight: 600;">✓ {{ r.status or 'Present' }}</span></td>
           </tr>
           {% else %}
           <tr>
-            <td colspan="6" class="empty">No attendance pushes recorded yet today.</td>
+            <td colspan="5" class="empty">No attendance pushes recorded yet today.</td>
           </tr>
           {% endfor %}
         </tbody>

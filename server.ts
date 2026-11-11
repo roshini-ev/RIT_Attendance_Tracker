@@ -59,7 +59,6 @@ interface PushRecord {
   latitude: number;
   longitude: number;
   location: string;
-  status?: string;
 }
 
 function getTodayDateString(): string {
@@ -122,14 +121,13 @@ function syncAllPushesToExcel(): void {
   try {
     const pushes = loadPushes();
     const rows = [
-      ['Staff ID', 'Phone Number', 'Date', 'Time', 'Block', 'Status'],
+      ['Staff ID', 'Phone Number', 'Date', 'Time', 'Block'],
       ...Object.values(pushes).map((p) => [
         p.staffId,
         p.phoneNumber || 'Unavailable',
         p.date || getTodayDateString(),
         formatTimeOnly(p.timestamp),
         p.location,
-        p.status || 'Present',
       ]),
     ];
 
@@ -141,7 +139,6 @@ function syncAllPushesToExcel(): void {
       { wch: 14 },
       { wch: 12 },
       { wch: 26 },
-      { wch: 12 },
     ];
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Staff Presence');
 
@@ -208,7 +205,6 @@ function initExcelSync(): void {
             latitude: Number(row['Latitude']) || 0,
             longitude: Number(row['Longitude']) || 0,
             location: String(row['Block'] || row['Location'] || 'Outside'),
-            status: String(row['Status'] || 'Present').trim() || 'Present',
           };
           changed = true;
         }
@@ -272,7 +268,7 @@ app.get('/api/status', (req, res) => {
 
 // Record push
 app.post('/api/push', (req, res) => {
-  const { staffId, latitude, longitude, phoneNumber, status } = req.body;
+  const { staffId, latitude, longitude, phoneNumber } = req.body;
 
   if (!staffId) {
     return res.status(400).json({ success: false, message: 'Staff ID is required.' });
@@ -280,7 +276,6 @@ app.post('/api/push', (req, res) => {
 
   const normalizedId = String(staffId).trim().toUpperCase();
   const normalizedPhone = String(phoneNumber || 'Unavailable').trim() || 'Unavailable';
-  const attendanceStatus = String(status || 'Present').trim() || 'Present';
 
   // Validate staff member exists or matches pattern
   if (!DUMMY_STAFF[normalizedId] && !/^STAFF\d+$/i.test(normalizedId)) {
@@ -323,7 +318,6 @@ app.post('/api/push', (req, res) => {
     latitude: lat,
     longitude: lon,
     location: detectedPlace,
-    status: attendanceStatus,
   };
 
   // Persist record

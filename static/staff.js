@@ -152,7 +152,6 @@ document.addEventListener('DOMContentLoaded', () => {
               longitude,
               phoneNumber: isAndroid ? selectedPhoneNumber : 'Unavailable',
               androidApp: isAndroid,
-              status: 'Present',
             }),
           });
 

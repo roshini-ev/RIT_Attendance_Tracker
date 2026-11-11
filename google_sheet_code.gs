@@ -23,7 +23,8 @@ function doGet() {
 
 function ensureAttendanceHeaders_(sheet) {
   if (!sheet.getRange('A1').getValue()) {
-    sheet.appendRow(['Staff ID', 'Phone Number', 'Date', 'Time', 'Block', 'Status']);
+    sheet.appendRow(['Staff ID', 'Phone Number', 'Date', 'Time', 'Block']);
+    sheet.getRange(1, 1, 1, 5).setFontWeight('bold');
     return;
   }
 
@@ -33,6 +34,17 @@ function ensureAttendanceHeaders_(sheet) {
     return String(h || '').trim().toLowerCase();
   });
 
+  // Remove any previously added Status column if present
+  var statusIdx = normHeaders.indexOf('status');
+  if (statusIdx !== -1) {
+    sheet.deleteColumn(statusIdx + 1);
+    lastCol = Math.max(sheet.getLastColumn(), 1);
+    rawHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    normHeaders = rawHeaders.map(function (h) {
+      return String(h || '').trim().toLowerCase();
+    });
+  }
+
   // Upgrade legacy 3-column sheet (Staff ID, Time, Block)
   if (normHeaders.indexOf('phone number') === -1 && normHeaders.indexOf('date') === -1 && normHeaders[1] === 'time') {
     sheet.insertColumnBefore(2);
@@ -40,23 +52,13 @@ function ensureAttendanceHeaders_(sheet) {
     sheet.insertColumnBefore(2);
     sheet.getRange('B1').setValue('Phone Number');
   } else if (normHeaders.indexOf('phone number') === -1) {
-    // Insert Phone Number before Date (column B) for 4-column or 5-column sheets
+    // Insert Phone Number before Date (column B) for 4-column sheets
     sheet.insertColumnBefore(2);
     sheet.getRange('B1').setValue('Phone Number');
   }
 
-  // Re-read row 1 to ensure Status exists at the end
-  lastCol = Math.max(sheet.getLastColumn(), 1);
-  rawHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
-  normHeaders = rawHeaders.map(function (h) {
-    return String(h || '').trim().toLowerCase();
-  });
-  if (normHeaders.indexOf('status') === -1) {
-    sheet.getRange(1, lastCol + 1).setValue('Status');
-  }
-
   // Format header row bold
-  sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 6)).setFontWeight('bold');
+  sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), 5)).setFontWeight('bold');
 }
 
 function doPost(e) {
@@ -67,7 +69,6 @@ function doPost(e) {
     var date = String(payload.date || Utilities.formatDate(new Date(), 'Asia/Kolkata', 'yyyy-MM-dd')).trim();
     var time = String(payload.time || '').trim();
     var block = String(payload.block || 'Outside').trim();
-    var status = String(payload.status || 'Present').trim();
 
     if (!staffId) {
       throw new Error('Missing staff_id in request body');
@@ -78,7 +79,7 @@ function doPost(e) {
 
     ensureAttendanceHeaders_(sheet);
 
-    var lastCol = Math.max(sheet.getLastColumn(), 6);
+    var lastCol = Math.max(sheet.getLastColumn(), 5);
     var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) {
       return String(h || '').trim().toLowerCase();
     });
@@ -96,8 +97,6 @@ function doPost(e) {
         rowValues[i] = time;
       } else if (h === 'block' || h === 'detected block' || h === 'location') {
         rowValues[i] = block;
-      } else if (h === 'status') {
-        rowValues[i] = status;
       } else {
         rowValues[i] = '';
       }
