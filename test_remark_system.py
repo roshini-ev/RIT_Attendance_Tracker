@@ -203,8 +203,8 @@ class TestRemarkSystemRebuild(unittest.TestCase):
             os.environ["REMARKS_SPREADSHEET_ID"] = "invalid-spreadsheet-id-for-testing"
             # Attempt to append remark
             res = remarks_sheet.append_remark("STAFF025", "Failure handling test remark")
-            # Should not raise exception, should return success: True with local save and sync_error
-            self.assertTrue(res.get("success"), "Local record must still succeed even if Google fails.")
+            # Should not raise exception, should return success: False with sync_error
+            self.assertFalse(res.get("success"), "Unsuccessful Google Sheets sync must not report false success.")
             self.assertFalse(res.get("google_sheet_synced"))
             self.assertIsNotNone(res.get("sync_error"))
         finally:
