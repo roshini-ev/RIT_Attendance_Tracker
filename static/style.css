@@ -103,6 +103,130 @@ body{
 }
 .status-msg{margin-top:14px;font-size:14px;font-weight:600;color:#c62828;min-height:1.2rem;}
 
+/* =========================================================
+   Separate Independent Remark Section
+   ========================================================= */
+.remark-divider{
+  height:1px;
+  background:#e2e8f0;
+  margin:28px 0 22px;
+}
+.remark-section{
+  text-align:left;
+  width:100%;
+  max-width:320px;
+  margin:0 auto;
+}
+.remark-header{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin-bottom:4px;
+}
+.remark-icon{
+  font-size:16px;
+}
+.remark-title{
+  font-size:15px;
+  font-weight:800;
+  color:#1a237e;
+  margin:0;
+  letter-spacing:.2px;
+}
+.remark-desc{
+  font-size:12px;
+  color:#64748b;
+  line-height:1.4;
+  margin:0 0 16px;
+}
+.remark-field{
+  margin-bottom:12px;
+}
+.remark-label{
+  display:block;
+  font-size:11px;
+  font-weight:800;
+  color:#546e7a;
+  margin-bottom:5px;
+  text-transform:uppercase;
+  letter-spacing:.5px;
+}
+.remark-input{
+  width:100%;
+  padding:10px 12px;
+  border:1.5px solid #cfd8dc;
+  border-radius:8px;
+  font-size:14px;
+  font-weight:600;
+  color:#1e293b;
+  background:#fafafa;
+  outline:none;
+  box-sizing:border-box;
+  transition:border-color .15s ease, background .15s ease;
+}
+.remark-input:focus{
+  border-color:#1565c0;
+  background:#fff;
+}
+.remark-textarea{
+  width:100%;
+  padding:10px 12px;
+  border:1.5px solid #cfd8dc;
+  border-radius:8px;
+  font-size:14px;
+  color:#1e293b;
+  background:#fafafa;
+  outline:none;
+  box-sizing:border-box;
+  min-height:84px;
+  resize:vertical;
+  font-family:inherit;
+  line-height:1.45;
+  transition:border-color .15s ease, background .15s ease;
+}
+.remark-textarea:focus{
+  border-color:#1565c0;
+  background:#fff;
+}
+.btn-submit-remark{
+  width:100%;
+  height:44px;
+  background:#0284c7;
+  color:#fff;
+  border:none;
+  border-radius:8px;
+  font-size:14px;
+  font-weight:700;
+  cursor:pointer;
+  box-shadow:0 2px 6px rgba(2,132,199,.25);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  transition:background .15s ease, box-shadow .15s ease;
+}
+.btn-submit-remark:hover{
+  background:#0369a1;
+}
+.btn-submit-remark:disabled{
+  background:#94a3b8;
+  cursor:not-allowed;
+  box-shadow:none;
+}
+.remark-status{
+  margin-top:10px;
+  font-size:13px;
+  font-weight:600;
+  text-align:center;
+  min-height:1.2rem;
+  line-height:1.35;
+}
+.remark-status.success{
+  color:#166534;
+}
+.remark-status.error{
+  color:#c62828;
+}
+
 .admin-app{background:var(--bg);}
 .admin-main{padding:18px 14px 32px;max-width:960px;margin:0 auto;}
 .pg-hd{margin-bottom:16px;}

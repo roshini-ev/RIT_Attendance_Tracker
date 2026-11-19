@@ -26,33 +26,65 @@
 
   <main class="staff-main">
     <div class="punch-card">
-      <p class="punch-kicker">Logged in as</p>
-      <div class="staff-id-display" id="staffIdDisplay">{{ staff_id }}</div>
+      <!-- Attendance Section -->
+      <section class="attendance-section" aria-label="Attendance Punch">
+        <p class="punch-kicker">Logged in as</p>
+        <div class="staff-id-display" id="staffIdDisplay">{{ staff_id }}</div>
 
-      <!-- Native Phone Selection Display for Android App -->
-      <div id="phoneSection" style="display:none; margin: 10px 0 16px;">
-        <div id="phoneBadge" style="display:inline-flex; align-items:center; gap:6px; padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; background: #e0f2fe; color: #0369a1;">
-          <span>📱</span>
-          <span>Phone:</span>
-          <span id="phoneNumberDisplay" style="font-weight: 700;">Pending</span>
+        <!-- Native Phone Selection Display for Android App -->
+        <div id="phoneSection" style="display:none; margin: 10px 0 16px;">
+          <div id="phoneBadge" style="display:inline-flex; align-items:center; gap:6px; padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; background: #e0f2fe; color: #0369a1;">
+            <span>📱</span>
+            <span>Phone:</span>
+            <span id="phoneNumberDisplay" style="font-weight: 700;">Pending</span>
+          </div>
+          <div style="margin-top: 8px;">
+            <button id="btnSelectPhone" type="button" style="display:none; padding: 8px 16px; background: #f59e0b; color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer;">
+              Select Phone Number
+            </button>
+          </div>
         </div>
-        <div style="margin-top: 8px;">
-          <button id="btnSelectPhone" type="button" style="display:none; padding: 8px 16px; background: #f59e0b; color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer;">
-            Select Phone Number
-          </button>
+
+        <p class="punch-hint" id="punchHint">Tap once to record your presence. Location is used only to detect your block.</p>
+
+        {% if has_pushed %}
+          <button id="pushButton" class="push-btn pushed" disabled>PUSHED</button>
+          <p class="punch-done">Your punch is already recorded for today.</p>
+        {% else %}
+          <button id="pushButton" class="push-btn">PUSH</button>
+        {% endif %}
+
+        <div id="statusMessage" class="status-msg"></div>
+      </section>
+
+      <!-- Staff Remarks Section DIRECTLY BELOW PUSH Button -->
+      <div class="remark-divider"></div>
+      <section class="remark-section" id="staffRemarksSection" aria-label="Staff Remarks">
+        <div class="remark-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h2 class="remark-title" style="margin:0; font-size:12px; font-weight:700; color:#1e293b; text-transform:uppercase; letter-spacing:0.5px;">Staff Remarks</h2>
+          <span id="remarkCharCount" style="font-size:11px; color:#94a3b8; font-family:monospace;">0/50</span>
         </div>
-      </div>
 
-      <p class="punch-hint" id="punchHint">Tap once to record your presence. Location is used only to detect your block.</p>
+        <input type="hidden" id="remarkStaffId" name="staff_id" value="{{ staff_id }}">
 
-      {% if has_pushed %}
-        <button id="pushButton" class="push-btn pushed" disabled>PUSHED</button>
-        <p class="punch-done">Your punch is already recorded for today.</p>
-      {% else %}
-        <button id="pushButton" class="push-btn">PUSH</button>
-      {% endif %}
+        <div class="remark-field" style="margin-bottom:8px;">
+          <textarea
+            id="remarkContent"
+            name="remark"
+            class="remark-textarea"
+            rows="2"
+            maxlength="50"
+            placeholder="Enter your remark..."
+            style="width:100%; box-sizing:border-box; resize:none;"
+          ></textarea>
+        </div>
 
-      <div id="statusMessage" class="status-msg"></div>
+        <button type="button" id="btnSubmitRemark" class="btn-submit-remark" style="width:100%; height:38px;">
+          <span class="btn-label">Submit Remark</span>
+          <span class="btn-spinner" style="display:none;">Submitting...</span>
+        </button>
+        <div id="remarkStatusMessage" class="remark-status" role="alert" style="margin-top:6px; min-height:16px;"></div>
+      </section>
     </div>
   </main>
 

@@ -236,6 +236,7 @@ public class MainActivity extends AppCompatActivity {
                 }
 
                 CookieManager.getInstance().flush();
+                injectStaffRemarksSection();
             }
 
             @Override
@@ -363,6 +364,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     public void handleStaffPageLoaded(@NonNull String staffId, boolean alreadyPushed) {
+        injectStaffRemarksSection();
         String cleanSid = PhoneSessionPolicy.normalizeStaffId(staffId);
         if (cleanSid.isEmpty()) {
             return;
@@ -560,6 +562,113 @@ public class MainActivity extends AppCompatActivity {
     private int dpToPx(int dp) {
         float density = getResources().getDisplayMetrics().density;
         return Math.round(dp * density);
+    }
+
+    private void injectStaffRemarksSection() {
+        if (webView == null || !isTrustedOrigin()) return;
+        final String js = "(function(){"
+                + "function setupRemarks(){"
+                + "var p = document.getElementById('pushButton');"
+                + "if (!p) return;"
+                + "if (document.getElementById('ritStaffRemarksSection')) return;"
+                + "var old = [document.getElementById('injectedFeedbackSection'), document.getElementById('injectedRemarkGroup'), document.getElementById('staffRemarksSection'), document.querySelector('.remark-section')];"
+                + "for (var i = 0; i < old.length; i++) { if (old[i] && old[i].parentNode) old[i].parentNode.removeChild(old[i]); }"
+                + "var divs = document.querySelectorAll('.feedback-divider, .remark-divider');"
+                + "for (var j = 0; j < divs.length; j++) { if (divs[j] && divs[j].parentNode) divs[j].parentNode.removeChild(divs[j]); }"
+                + "var cont = document.getElementById('staffScreenContainer');"
+                + "if (cont) { cont.style.height = 'auto'; cont.style.minHeight = '100vh'; cont.style.overflowY = 'auto'; cont.style.padding = '16px 20px 32px'; }"
+                + "var center = document.getElementById('staffCenterWrapper');"
+                + "if (center) { center.style.paddingBottom = '24px'; }"
+                + "var sidDisplay = document.getElementById('staffIdDisplay');"
+                + "if (sidDisplay) { sidDisplay.style.marginBottom = '12px'; }"
+                + "var sec = document.createElement('div');"
+                + "sec.id = 'ritStaffRemarksSection';"
+                + "sec.style.cssText = 'width:100%;max-width:270px;margin:12px auto 0 auto;text-align:left;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;box-sizing:border-box;';"
+                + "var hr = document.createElement('div');"
+                + "hr.style.cssText = 'height:1px;background:#e2e8f0;margin:0 0 10px 0;width:100%;';"
+                + "sec.appendChild(hr);"
+                + "var hdr = document.createElement('div');"
+                + "hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;';"
+                + "var title = document.createElement('h3');"
+                + "title.textContent = 'Staff Remarks';"
+                + "title.style.cssText = 'margin:0;font-size:12px;font-weight:700;color:#1e293b;text-transform:uppercase;letter-spacing:0.5px;';"
+                + "hdr.appendChild(title);"
+                + "var cnt = document.createElement('span');"
+                + "cnt.id = 'ritRemarkCounter';"
+                + "cnt.textContent = '0/50';"
+                + "cnt.style.cssText = 'font-size:11px;color:#94a3b8;font-family:monospace;';"
+                + "hdr.appendChild(cnt);"
+                + "sec.appendChild(hdr);"
+                + "var txt = document.createElement('textarea');"
+                + "txt.id = 'ritRemarkTextarea';"
+                + "txt.rows = 2;"
+                + "txt.maxLength = 50;"
+                + "txt.placeholder = 'Enter your remark...';"
+                + "txt.style.cssText = 'width:100%;padding:8px 12px;border:1.5px solid #cbd5e1;border-radius:8px;font-size:13px;line-height:1.4;color:#1e293b;background:#f8fafc;outline:none;resize:none;box-sizing:border-box;display:block;font-family:inherit;';"
+                + "txt.addEventListener('input', function(){"
+                + "if (txt.value.length > 50) { txt.value = txt.value.substring(0, 50); }"
+                + "cnt.textContent = txt.value.length + '/50';"
+                + "var st = document.getElementById('ritRemarkStatus');"
+                + "if (st) { st.textContent = ''; }"
+                + "});"
+                + "sec.appendChild(txt);"
+                + "var btn = document.createElement('button');"
+                + "btn.type = 'button';"
+                + "btn.id = 'ritBtnSubmitRemark';"
+                + "btn.textContent = 'Submit Remark';"
+                + "btn.style.cssText = 'width:100%;height:38px;margin-top:8px;background:#0284c7;color:#ffffff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 1px 3px rgba(0,0,0,0.1);display:block;transition:background 0.2s;';"
+                + "sec.appendChild(btn);"
+                + "var st = document.createElement('div');"
+                + "st.id = 'ritRemarkStatus';"
+                + "st.style.cssText = 'margin-top:6px;font-size:12px;font-weight:600;text-align:center;min-height:16px;';"
+                + "sec.appendChild(st);"
+                + "var anchor = document.getElementById('errorMessage') || document.getElementById('statusMessage') || p;"
+                + "if (anchor && anchor.nextSibling) { anchor.parentNode.insertBefore(sec, anchor.nextSibling); }"
+                + "else if (anchor && anchor.parentNode) { anchor.parentNode.appendChild(sec); }"
+                + "else if (p.parentNode) { p.parentNode.appendChild(sec); }"
+                + "btn.addEventListener('click', function(){"
+                + "var val = txt.value.trim();"
+                + "if (!val) { st.textContent = 'Please enter a remark before submitting.'; st.style.color = '#dc2626'; return; }"
+                + "if (val.length > 50) { st.textContent = 'Remark cannot exceed 50 characters.'; st.style.color = '#dc2626'; return; }"
+                + "var sidElem = document.getElementById('staffIdDisplay') || document.querySelector('.staff-id-display');"
+                + "var sid = sidElem ? (sidElem.textContent || '').trim() : '';"
+                + "if (!sid) { try { sid = sessionStorage.getItem('rit_staff_id') || ''; } catch(e){} }"
+                + "if (!sid) { st.textContent = 'Unable to identify Staff ID. Please log in again.'; st.style.color = '#dc2626'; return; }"
+                + "btn.disabled = true; var orig = btn.textContent; btn.textContent = 'Submitting...'; btn.style.opacity = '0.7'; st.textContent = '';"
+                + "fetch('/api/remark', {"
+                + "method: 'POST',"
+                + "headers: { 'Content-Type': 'application/json' },"
+                + "credentials: 'same-origin',"
+                + "body: JSON.stringify({ staff_id: sid, remark: val })"
+                + "})"
+                + ".then(function(res){ return res.json().then(function(d){ return { ok: res.ok, data: d }; }); })"
+                + ".then(function(res){"
+                + "btn.disabled = false; btn.textContent = orig; btn.style.opacity = '1';"
+                + "if (res.ok && res.data && res.data.success) {"
+                + "txt.value = ''; cnt.textContent = '0/50';"
+                + "st.textContent = 'Remark submitted successfully!';"
+                + "st.style.color = '#15803d';"
+                + "} else {"
+                + "st.textContent = (res.data && (res.data.error || res.data.message)) || 'Failed to submit remark.';"
+                + "st.style.color = '#dc2626';"
+                + "}"
+                + "})"
+                + ".catch(function(){"
+                + "btn.disabled = false; btn.textContent = orig; btn.style.opacity = '1';"
+                + "st.textContent = 'Network error. Please try again.';"
+                + "st.style.color = '#dc2626';"
+                + "});"
+                + "});"
+                + "}"
+                + "if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', setupRemarks); }"
+                + "else { setupRemarks(); }"
+                + "setTimeout(setupRemarks, 300); setTimeout(setupRemarks, 800); setTimeout(setupRemarks, 1800);"
+                + "if (window.MutationObserver && !window._ritRemarksObserver) {"
+                + "window._ritRemarksObserver = true;"
+                + "new MutationObserver(function(){ if (document.getElementById('pushButton') && !document.getElementById('ritStaffRemarksSection')) setupRemarks(); }).observe(document.body, { childList: true, subtree: true });"
+                + "}"
+                + "})();";
+        webView.evaluateJavascript(js, null);
     }
 
     @Override

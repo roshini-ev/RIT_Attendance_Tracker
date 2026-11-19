@@ -9,3 +9,15 @@ __pycache__/
 Pictures/
 .env*
 !.env.example
+
+# APK builds
+*.apk
+*.aab
+
+# Google Service Account credentials & config
+service_account.json
+*service_account*.json
+*credentials*.json
+*.key.json
+remarks_sheet_config.json
+staff_remarks.json

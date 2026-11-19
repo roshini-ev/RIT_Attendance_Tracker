@@ -3,7 +3,7 @@ Rajalakshmi Institute of Technology (RIT)
 Staff location attendance - mobile web app.
 
 No admin/role-based login exists. Staff log in, tap PUSH once, done.
-Every successful push appends a row (Staff ID, Time, Block) to the Excel
+Every successful push appends a row (Staff ID, Phone Number, Date, Time, Block) to the Excel
 sheet. Anyone who has the link can open/download it (no login):
 
     http://<this-pc-ip>:3000/excel
@@ -43,6 +43,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 
 from geofence import detect_location
+import remarks_sheet
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "rit-attendance-dummy-secret-key-2026")
@@ -51,6 +52,7 @@ app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 DUMMY_STAFF = {f"STAFF{i:03d}": "staff123" for i in range(1, 51)}
 DUMMY_STAFF["HOD01"] = "staff123"
 
+# Pure Attendance Headers - Remarks are stored in a completely separate spreadsheet
 EXCEL_HEADERS = ["Staff ID", "Phone Number", "Date", "Time", "Block"]
 
 # Indian Standard Time (IST, UTC+05:30) for precise daily cutoff at 00:00 midnight
@@ -150,7 +152,7 @@ def record_push_today(staff_id: str, timestamp: str, block: str, lat: float = No
         pass
 
 
-# Default Google Sheets Webhook URL (verified working Apps Script web app)
+# Default Google Sheets Webhook URL (verified working Apps Script web app for attendance)
 DEFAULT_GOOGLE_SHEET_WEBHOOK = "https://script.google.com/macros/s/AKfycbwre5bpwFPjLs7PmAMNvdfaZzx1LgYjP8UbUHghUsuJgnGAO3himq9MUethM1xZPyqW/exec"
 
 
@@ -172,14 +174,10 @@ def get_google_sheet_webhook() -> str:
 
 
 def sync_to_google_sheet(staff_id: str, phone_number: str, date_str: str, timestamp: str, block: str) -> bool:
-    """Append one punch row to the linked Google Sheet via its Apps Script webhook.
-
-    Uses standard urllib.request which automatically follows Google Apps Script
-    302 redirects with GET to complete the request successfully.
-    """
+    """Append one punch row to the linked Attendance Google Sheet via its Apps Script webhook."""
     webhook_url = get_google_sheet_webhook()
     if not webhook_url:
-        print("[Google Sheet] No webhook URL configured")
+        print("[Google Sheet Attendance] No webhook URL configured")
         return False
 
     payload = json.dumps({
@@ -198,10 +196,10 @@ def sync_to_google_sheet(staff_id: str, phone_number: str, date_str: str, timest
     try:
         with urllib.request.urlopen(req, timeout=25) as resp:
             body = resp.read().decode("utf-8", errors="ignore")
-            print(f"[Google Sheet] Synced {staff_id} ({timestamp}, {block}): HTTP {resp.status} - {body}")
+            print(f"[Google Sheet Attendance] Synced {staff_id} ({timestamp}, {block}): HTTP {resp.status} - {body}")
             return True
     except Exception as e:
-        print(f"[Google Sheet] Sync failed for {staff_id}: {e}")
+        print(f"[Google Sheet Attendance] Sync failed for {staff_id}: {e}")
         return False
 
 
@@ -213,8 +211,6 @@ def authenticate_staff(staff_id: str, password: str) -> bool:
     if re.match(r"^STAFF\d+$", sid) and pwd == "staff123":
         return True
     return False
-
-
 
 
 def get_excel_file_path() -> str:
@@ -269,12 +265,13 @@ def build_excel_workbook(records) -> Workbook:
     ws.title = "Staff Presence"
     ws.append(EXCEL_HEADERS)
     for r in records:
+        block_val = r.get("block") if r.get("block") else "Outside"
         ws.append([
             r.get("staff_id", ""),
             r.get("phone_number", "Unavailable"),
             r.get("date", ""),
             r.get("time", ""),
-            r.get("block", ""),
+            block_val,
         ])
     style_excel_sheet(ws)
     return wb
@@ -298,23 +295,36 @@ def init_excel_file():
                     continue
                 sid = str(row[0]).strip().upper()
                 col1 = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ""
-                # Handle legacy 4/5-column layout without Phone Number (Staff ID, Date, Time, Block[, Status])
+                # Handle legacy 4-column layout without Phone Number (Staff ID, Date, Time, Block)
                 if len(row) >= 4 and re.match(r"^\d{4}-\d{2}-\d{2}$", col1):
                     date_val = col1
                     time_val = str(row[2]).strip() if len(row) > 2 and row[2] is not None else ""
                     block = str(row[3]).strip() if len(row) > 3 and row[3] is not None else "Outside"
-                    attendance_records.append({"staff_id": sid, "phone_number": "Unavailable", "date": date_val, "time": time_val, "block": block})
+                    attendance_records.append({
+                        "staff_id": sid,
+                        "phone_number": "Unavailable",
+                        "date": date_val,
+                        "time": time_val,
+                        "block": block,
+                    })
                 elif len(row) >= 5:
                     phone_val = col1 if col1 else "Unavailable"
                     date_val = str(row[2]).strip() if row[2] else ""
                     time_val = str(row[3]).strip() if len(row) > 3 and row[3] is not None else ""
-                    block = str(row[4]).strip() if len(row) > 4 and row[4] is not None else "Outside"
+                    raw_block = str(row[4]).strip() if len(row) > 4 and row[4] is not None else "Outside"
+                    block = raw_block if raw_block and raw_block.lower() != "none" else "Outside"
                     if date_val and date_val.lower() != "none" and len(date_val) >= 8:
-                        attendance_records.append({"staff_id": sid, "phone_number": phone_val, "date": date_val, "time": time_val, "block": block})
+                        attendance_records.append({
+                            "staff_id": sid,
+                            "phone_number": phone_val,
+                            "date": date_val,
+                            "time": time_val,
+                            "block": block,
+                        })
         except Exception as e:
             print(f"Error inspecting Excel file: {e}")
 
-    # Ensure writable Excel file is ready with only records that have the Date filled
+    # Ensure writable Excel file is ready with only attendance records
     writable_path = get_excel_file_path()
     try:
         wb = build_excel_workbook(attendance_records)
@@ -324,7 +334,7 @@ def init_excel_file():
 
 
 def append_excel_record(staff_id: str, phone_number: str, date_str: str, timestamp: str, block: str):
-    """Append a record to in-memory store and to disk Excel file if possible."""
+    """Append an attendance punch record to in-memory store and to disk Excel file."""
     attendance_records.append({
         "staff_id": staff_id,
         "phone_number": phone_number,
@@ -419,6 +429,7 @@ def api_status():
 
 @app.route("/api/push", methods=["POST"])
 def api_push():
+    """Attendance Punch Endpoint - strictly handles attendance only."""
     data = request.get_json() or {}
     session_staff_id = session.get("staff_id")
     if not session_staff_id:
@@ -464,18 +475,18 @@ def api_push():
     date_str = now_ist.strftime("%Y-%m-%d")
     timestamp = now_ist.strftime("%H:%M:%S")
 
-    print(f"[PUSH] Staff: {staff_id} | Phone: {phone_number} | Date: {date_str} | Time: {timestamp} | GPS: ({lat:.7f}, {lon:.7f}) | Block: {block}")
+    print(f"[PUSH ATTENDANCE] Staff: {staff_id} | Phone: {phone_number} | Date: {date_str} | Time: {timestamp} | GPS: ({lat:.7f}, {lon:.7f}) | Block: {block}")
 
     # 1. Mark staff as pushed today and append to stores
     record_push_today(staff_id, timestamp, block, lat, lon, phone_number=phone_number)
     append_excel_record(staff_id, phone_number, date_str, timestamp, block)
 
-    # 2. Sync immediately to Google Sheets (live cloud sync for phone and PC)
+    # 2. Sync immediately to Attendance Google Sheet
     sheet_synced = False
     try:
         sheet_synced = sync_to_google_sheet(staff_id, phone_number, date_str, timestamp, block)
     except Exception as e:
-        print(f"[Google Sheet] Sync exception for {staff_id}: {e}")
+        print(f"[Google Sheet Attendance] Sync exception for {staff_id}: {e}")
 
     return jsonify({
         "success": True,
@@ -487,6 +498,38 @@ def api_push():
         "block": block,
         "google_sheet_synced": sheet_synced,
     })
+
+
+@app.route("/api/remark", methods=["POST"])
+def api_remark():
+    """
+    Completely Independent Staff Remark submission endpoint.
+    Accepts: { staff_id: '...', remark: '...' }
+    Can be submitted at any time without pressing attendance PUSH.
+    Appends to the separate Google Spreadsheet 'RIT Staff Remarks'.
+    """
+    data = request.get_json() or {}
+    raw_staff_id = data.get("staff_id") if "staff_id" in data else data.get("staffId")
+    remark = data.get("remark") or data.get("remarkText") or ""
+
+    # If staff_id was not provided at all in request, fallback to session if authenticated
+    if raw_staff_id is None and session.get("staff_id"):
+        raw_staff_id = session.get("staff_id")
+
+    clean_sid = str(raw_staff_id or "").strip().upper()
+    if not clean_sid:
+        return jsonify({"success": False, "error": "Staff ID is required."}), 400
+
+    result = remarks_sheet.append_remark(clean_sid, remark)
+    status_code = result.get("status_code", 200)
+    return jsonify(result), status_code
+
+
+@app.route("/api/remarks/status", methods=["GET"])
+def api_remarks_status():
+    """Return the configuration and status of the independent Remarks Google Spreadsheet."""
+    status = remarks_sheet.init_remarks_spreadsheet()
+    return jsonify(status)
 
 
 @app.route("/api/records", methods=["GET"])
@@ -521,9 +564,28 @@ def shared_excel():
     return response
 
 
+@app.route("/apk")
+@app.route("/download-apk")
+def download_apk():
+    """Serve the compiled Android APK file."""
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "rit-attendance-tracker.apk"),
+        os.path.join(os.path.dirname(__file__), "android", "app", "build", "outputs", "apk", "debug", "app-debug.apk"),
+    ]
+    for apk_path in candidates:
+        if os.path.exists(apk_path):
+            return send_file(
+                apk_path,
+                as_attachment=True,
+                download_name="rit-attendance-tracker.apk",
+                mimetype="application/vnd.android.package-archive",
+            )
+    return "APK file not found. Please build using: cd android && .\\gradlew assembleDebug", 404
+
+
 @app.route("/attendance")
 def attendance_dashboard():
-    """Live Attendance View."""
+    """Live Attendance View (pure attendance records)."""
     html = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -580,7 +642,7 @@ def attendance_dashboard():
             <td>{{ r.phone_number or 'Unavailable' }}</td>
             <td>{{ r.date or '' }}</td>
             <td>{{ r.time }}</td>
-            <td>{{ r.block }}</td>
+            <td>{{ r.block or '-' }}</td>
           </tr>
           {% else %}
           <tr>
@@ -616,16 +678,25 @@ def lan_ip():
 if __name__ == "__main__":
     ip = lan_ip()
     hook = get_google_sheet_webhook()
+    remarks_info = remarks_sheet.init_remarks_spreadsheet()
+
     print("=" * 60)
-    print("  RIT Staff Attendance - running")
+    print("  RIT Staff Attendance Tracker - running")
     print(f"  Staff Portal:       http://{ip}:3000")
     print(f"  Excel Download:     http://{ip}:3000/excel")
     print(f"  Live Monitor:       http://{ip}:3000/attendance")
+    print(f"  Android APK:        http://{ip}:3000/apk")
     print("=" * 60)
     if hook:
-        print(f"  Google Sheets sync: ON -> {hook[:50]}...")
+        print(f"  Attendance Google Sheets sync: ON -> {hook[:50]}...")
     else:
-        print("  Google Sheets sync: OFF")
+        print("  Attendance Google Sheets sync: OFF")
+
+    if remarks_info.get("configured"):
+        print(f"  Remarks Google Sheet:          ON -> {remarks_info.get('spreadsheet_url')}")
+    else:
+        print(f"  Remarks Google Sheet:          PENDING CONFIG / CREATION")
+        if remarks_info.get("action_required"):
+            print(f"  -> Action: {remarks_info.get('action_required')}")
     print()
     app.run(host="0.0.0.0", port=3000, debug=False)
-

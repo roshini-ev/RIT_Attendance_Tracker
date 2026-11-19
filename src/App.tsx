@@ -46,6 +46,9 @@ export default function App() {
 
   const [hasPushed, setHasPushed] = useState<boolean>(false);
   const [isPushing, setIsPushing] = useState<boolean>(false);
+  const [remarkText, setRemarkText] = useState<string>('');
+  const [isSubmittingRemark, setIsSubmittingRemark] = useState<boolean>(false);
+  const [remarkStatus, setRemarkStatus] = useState<{ message: string; isError: boolean } | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [selectedPhone, setSelectedPhone] = useState<string | null>(() => {
     if (typeof window !== 'undefined' && window.AndroidBridge) {
@@ -90,6 +93,9 @@ export default function App() {
     setStaffId(null);
     setHasPushed(false);
     setIsPushing(false);
+    setRemarkText('');
+    setIsSubmittingRemark(false);
+    setRemarkStatus(null);
     setErrorMessage(null);
     setSelectedPhone(null);
     justLoggedInRef.current = false;
@@ -302,6 +308,56 @@ export default function App() {
     );
   };
 
+  const handleRemarkSubmit = async () => {
+    const targetStaffId = (staffId || sessionStorage.getItem('rit_staff_id') || '').trim().toUpperCase();
+    const trimmed = remarkText.trim();
+
+    if (!targetStaffId) {
+      setRemarkStatus({ message: 'Staff ID not detected. Please log in again.', isError: true });
+      return;
+    }
+
+    if (!trimmed) {
+      setRemarkStatus({ message: 'Please enter a remark before submitting.', isError: true });
+      return;
+    }
+
+    if (trimmed.length > 50) {
+      setRemarkStatus({ message: 'Remark cannot exceed 50 characters.', isError: true });
+      return;
+    }
+
+    setIsSubmittingRemark(true);
+    setRemarkStatus(null);
+
+    try {
+      const response = await fetch('/api/remark', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          staff_id: targetStaffId,
+          remark: trimmed,
+        }),
+      });
+
+      const data = await response.json();
+      if (response.ok && data.success) {
+        setRemarkText('');
+        setRemarkStatus({ message: 'Remark submitted successfully!', isError: false });
+      } else {
+        setRemarkStatus({
+          message: data.error || data.message || 'Failed to submit remark.',
+          isError: true,
+        });
+      }
+    } catch {
+      setRemarkStatus({ message: 'Network error. Please try again.', isError: true });
+    } finally {
+      setIsSubmittingRemark(false);
+    }
+  };
+
   const handleRequestPhoneHint = () => {
     setErrorMessage(null);
     if (isAndroid && window.AndroidBridge) {
@@ -413,7 +469,7 @@ export default function App() {
   return (
     <div
       id="staffScreenContainer"
-      className="relative h-screen w-screen flex flex-col items-center justify-center bg-white p-6 select-none overflow-hidden"
+      className="relative min-h-screen w-full flex flex-col items-center justify-center bg-white px-4 py-8 select-none overflow-y-auto"
     >
       <div className="absolute top-4 right-4">
         <button
@@ -426,19 +482,19 @@ export default function App() {
 
       <div
         id="staffCenterWrapper"
-        className="flex flex-col items-center justify-center text-center"
+        className="flex flex-col items-center justify-center text-center w-full max-w-xs"
       >
         <div
           id="staffIdDisplay"
-          className="text-3xl font-bold tracking-wider text-slate-800 mb-4"
+          className="text-3xl font-bold tracking-wider text-slate-800 mb-2"
         >
           {staffId}
         </div>
 
         {isAndroid && (
-          <div className="mb-6 flex flex-col items-center gap-2">
+          <div className="mb-3 flex flex-col items-center gap-1.5">
             <div
-              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold ${
+              className={`px-3 py-1 rounded-full text-xs font-semibold ${
                 selectedPhone === 'Unavailable'
                   ? 'bg-amber-100 text-amber-800'
                   : selectedPhone
@@ -452,7 +508,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={handleRequestPhoneHint}
-                className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg shadow-sm cursor-pointer"
+                className="px-3.5 py-1 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg shadow-sm cursor-pointer"
               >
                 Select Phone Number
               </button>
@@ -464,7 +520,7 @@ export default function App() {
           id="pushButton"
           disabled={pushDisabled}
           onClick={handlePush}
-          className={`w-56 h-16 text-xl font-bold tracking-widest rounded-xl transition-all duration-200 flex items-center justify-center ${
+          className={`w-56 h-14 text-xl font-bold tracking-widest rounded-xl transition-all duration-200 flex items-center justify-center ${
             hasPushed || (isAndroid && !selectedPhone)
               ? 'bg-slate-400 text-slate-100 cursor-not-allowed shadow-none'
               : isPushing
@@ -478,9 +534,63 @@ export default function App() {
         {/* Minimal error notification */}
         <div
           id="errorMessage"
-          className="mt-5 text-sm font-medium text-red-500 min-h-5 max-w-xs"
+          className="mt-1.5 text-xs font-medium text-red-500 min-h-4 max-w-xs"
         >
           {errorMessage || ''}
+        </div>
+
+        {/* Staff Remarks Section DIRECTLY BELOW PUSH Button */}
+        <div id="staffRemarksSection" className="w-full mt-2.5 flex flex-col text-left">
+          <div className="w-full border-t border-slate-200 mb-2" />
+
+          <div className="flex items-center justify-between mb-1.5">
+            <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+              Staff Remarks
+            </h3>
+            <span
+              id="remarkCharCount"
+              className={`text-[11px] font-mono ${remarkText.length > 50 ? 'text-red-500 font-bold' : 'text-slate-400'}`}
+            >
+              {remarkText.length}/50
+            </span>
+          </div>
+
+          <textarea
+            id="remarkContent"
+            name="remark"
+            rows={2}
+            maxLength={50}
+            value={remarkText}
+            onChange={(e) => {
+              if (e.target.value.length <= 50) {
+                setRemarkText(e.target.value);
+              }
+              if (remarkStatus) setRemarkStatus(null);
+            }}
+            placeholder="Enter your remark..."
+            className="w-full px-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-sky-500 focus:border-sky-500 bg-slate-50 resize-none text-slate-800 placeholder:text-slate-400 leading-snug"
+          />
+
+          <button
+            type="button"
+            id="btnSubmitRemark"
+            disabled={isSubmittingRemark}
+            onClick={handleRemarkSubmit}
+            className="w-full h-10 mt-2 bg-sky-600 hover:bg-sky-700 active:bg-sky-800 disabled:bg-slate-300 text-white font-bold text-xs uppercase tracking-wider rounded-lg shadow-sm cursor-pointer disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1.5"
+          >
+            {isSubmittingRemark ? 'Submitting...' : 'Submit Remark'}
+          </button>
+
+          {remarkStatus && (
+            <div
+              id="remarkStatus"
+              className={`mt-1.5 text-xs font-semibold text-center min-h-4 ${
+                remarkStatus.isError ? 'text-red-500' : 'text-emerald-700'
+              }`}
+            >
+              {remarkStatus.message}
+            </div>
+          )}
         </div>
       </div>
     </div>

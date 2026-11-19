@@ -61,6 +61,18 @@ interface PushRecord {
   location: string;
 }
 
+interface AttendanceRecord {
+  staffId: string;
+  phoneNumber?: string;
+  date: string;
+  time: string;
+  timestamp?: string;
+  block?: string;
+  isAttendance?: boolean;
+}
+
+const RECORDS_JSON_FILE = path.join(DATA_DIR, 'records.json');
+
 function getTodayDateString(): string {
   const now = new Date();
   const pad = (n: number) => n.toString().padStart(2, '0');
@@ -84,6 +96,26 @@ function savePushes(pushes: Record<string, PushRecord>): void {
     fs.writeFileSync(PUSHES_JSON_FILE, JSON.stringify(pushes, null, 2), 'utf-8');
   } catch (err) {
     console.error('Error writing pushes.json:', err);
+  }
+}
+
+function loadRecords(): AttendanceRecord[] {
+  try {
+    if (fs.existsSync(RECORDS_JSON_FILE)) {
+      const data = fs.readFileSync(RECORDS_JSON_FILE, 'utf-8');
+      return JSON.parse(data);
+    }
+  } catch (err) {
+    console.error('Error reading records.json:', err);
+  }
+  return [];
+}
+
+function saveRecords(records: AttendanceRecord[]): void {
+  try {
+    fs.writeFileSync(RECORDS_JSON_FILE, JSON.stringify(records, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error writing records.json:', err);
   }
 }
 
@@ -113,21 +145,22 @@ const LOCAL_EXCEL_DESTINATIONS = [
 ];
 
 /**
- * Syncs all recorded pushes from pushes.json to staff_presence.xlsx across
+ * Syncs all recorded punches and feedback records to staff_presence.xlsx across
  * local computer directories (Project, Downloads, and Desktop).
- * Reconstructs the sheet so every push is accurately and reliably saved.
+ * Syncs all recorded punches to staff_presence.xlsx across
+ * local computer directories (Project, Downloads, and Desktop).
  */
-function syncAllPushesToExcel(): void {
+function syncAllRecordsToExcel(): void {
   try {
-    const pushes = loadPushes();
+    const records = loadRecords();
     const rows = [
       ['Staff ID', 'Phone Number', 'Date', 'Time', 'Block'],
-      ...Object.values(pushes).map((p) => [
-        p.staffId,
-        p.phoneNumber || 'Unavailable',
-        p.date || getTodayDateString(),
-        formatTimeOnly(p.timestamp),
-        p.location,
+      ...records.map((r) => [
+        r.staffId,
+        r.phoneNumber || 'Unavailable',
+        r.date || getTodayDateString(),
+        formatTimeOnly(r.time || r.timestamp || ''),
+        r.block || 'Outside',
       ]),
     ];
 
@@ -175,46 +208,62 @@ function syncAllPushesToExcel(): void {
       }
     }
   } catch (err: any) {
-    console.error('[Excel Sync] Critical error syncing pushes:', err);
+    console.error('[Excel Sync] Critical error syncing records:', err);
   }
 }
 
 /**
  * Initialize on startup: read any existing rows in staff_presence.xlsx
- * and ensure they exist in pushes.json, then ensure Excel is up-to-date.
+ * and ensure they exist in records.json and pushes.json, then ensure Excel is up-to-date.
  */
 function initExcelSync(): void {
   try {
-    if (fs.existsSync(EXCEL_FILE)) {
+    let records = loadRecords();
+    const pushes = loadPushes();
+
+    if (records.length === 0 && fs.existsSync(EXCEL_FILE)) {
       const workbook = XLSX.readFile(EXCEL_FILE);
       const sheetName = workbook.SheetNames[0];
       const sheet = workbook.Sheets[sheetName];
       const rows: any[] = XLSX.utils.sheet_to_json(sheet);
-      const pushes = loadPushes();
-      let changed = false;
 
       for (const row of rows) {
         const sid = String(row['Staff ID'] || '').trim().toUpperCase();
         const dateVal = String(row['Date'] || '').trim();
-        if (sid && !pushes[sid] && dateVal) {
-          pushes[sid] = {
+        const timeVal = formatTimeOnly(String(row['Time'] || row['Timestamp'] || getFormattedTimestamp()));
+        const phoneVal = String(row['Phone Number'] || 'Unavailable').trim() || 'Unavailable';
+        const rawBlock = String(row['Block'] || row['Location'] || '').trim();
+        const blockVal = rawBlock.toLowerCase() === 'none' ? 'Outside' : rawBlock || 'Outside';
+
+        if (sid && dateVal) {
+          records.push({
             staffId: sid,
-            phoneNumber: String(row['Phone Number'] || 'Unavailable').trim() || 'Unavailable',
+            phoneNumber: phoneVal,
             date: dateVal,
-            timestamp: String(row['Time'] || row['Timestamp'] || getFormattedTimestamp()),
-            latitude: Number(row['Latitude']) || 0,
-            longitude: Number(row['Longitude']) || 0,
-            location: String(row['Block'] || row['Location'] || 'Outside'),
-          };
-          changed = true;
+            time: timeVal,
+            block: blockVal,
+            isAttendance: true,
+          });
+
+          if (!pushes[sid]) {
+            pushes[sid] = {
+              staffId: sid,
+              phoneNumber: phoneVal,
+              date: dateVal,
+              timestamp: timeVal,
+              latitude: 0,
+              longitude: 0,
+              location: blockVal,
+            };
+          }
         }
       }
 
-      if (changed) {
-        savePushes(pushes);
-      }
+      saveRecords(records);
+      savePushes(pushes);
     }
-    syncAllPushesToExcel();
+
+    syncAllRecordsToExcel();
   } catch (err) {
     console.error('Error initializing Excel sync:', err);
   }
@@ -266,7 +315,7 @@ app.get('/api/status', (req, res) => {
   });
 });
 
-// Record push
+// Record push (strictly attendance)
 app.post('/api/push', (req, res) => {
   const { staffId, latitude, longitude, phoneNumber } = req.body;
 
@@ -324,12 +373,84 @@ app.post('/api/push', (req, res) => {
   pushes[normalizedId] = record;
   savePushes(pushes);
 
-  // Sync immediately to Excel file
-  syncAllPushesToExcel();
+  const records = loadRecords();
+  records.push({
+    staffId: normalizedId,
+    phoneNumber: normalizedPhone,
+    date: today,
+    time: timestamp,
+    block: detectedPlace,
+    isAttendance: true,
+  });
+  saveRecords(records);
+
+  // Sync immediately to Excel file across all destinations
+  syncAllRecordsToExcel();
 
   return res.json({
     success: true,
     status: 'PUSHED',
+    staff_id: normalizedId,
+    phone_number: normalizedPhone,
+    date: today,
+    time: timestamp,
+    block: detectedPlace,
+  });
+});
+
+// Completely Independent Staff Remark submission
+app.post('/api/remark', (req, res) => {
+  const staffId = req.body.staff_id || req.body.staffId;
+  const remark = req.body.remark || req.body.remarkText;
+
+  if (!staffId || !String(staffId).trim()) {
+    return res.status(400).json({ success: false, error: 'Staff ID is required.' });
+  }
+
+  const cleanRemark = String(remark || '').trim();
+  if (!cleanRemark) {
+    return res.status(400).json({ success: false, error: 'Remark text is required.' });
+  }
+
+  const normalizedId = String(staffId).trim().toUpperCase();
+  const today = getTodayDateString();
+  const timestamp = getFormattedTimestamp();
+
+  // Save independently to staff_remarks.json
+  const remarksFile = path.join(__dirname, 'staff_remarks.json');
+  try {
+    let existing: any[] = [];
+    if (fs.existsSync(remarksFile)) {
+      existing = JSON.parse(fs.readFileSync(remarksFile, 'utf-8'));
+    }
+    existing.push({
+      staff_id: normalizedId,
+      date: today,
+      time: timestamp,
+      remark: cleanRemark,
+    });
+    fs.writeFileSync(remarksFile, JSON.stringify(existing, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error persisting remark:', err);
+  }
+
+  return res.json({
+    success: true,
+    message: 'Remark submitted successfully!',
+    staff_id: normalizedId,
+    date: today,
+    time: timestamp,
+    remark: cleanRemark,
+  });
+});
+
+// Return all recorded punches & feedback entries in JSON format
+app.get('/api/records', (req, res) => {
+  const records = loadRecords();
+  return res.json({
+    success: true,
+    count: records.length,
+    records,
   });
 });
 
@@ -339,7 +460,7 @@ app.get('/api/download-excel', (req, res) => {
   if (key !== 'admin123') {
     return res.status(403).json({ error: 'Admin only.' });
   }
-  syncAllPushesToExcel();
+  syncAllRecordsToExcel();
   if (fs.existsSync(EXCEL_FILE)) {
     res.download(EXCEL_FILE, 'staff_presence.xlsx');
   } else {
